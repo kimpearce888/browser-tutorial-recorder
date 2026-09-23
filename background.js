@@ -499,10 +499,20 @@ async function handlePageMessage(message) {
   }
 }
 
+const EXT_BASE = chrome.runtime.getURL("");
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== "string") return undefined;
 
-  if (!sender.tab && sender.id === chrome.runtime.id) {
+  // Extension pages opened in a browser tab (editor/dashboard/settings/preview)
+  // DO have sender.tab set — only the popup and the service worker lack it.
+  // Route by sender URL, never by the absence of sender.tab: content scripts
+  // always carry the host page URL, extension pages always carry our own
+  // chrome-extension://<id>/ URL.
+  const fromExtensionPage = sender.id === chrome.runtime.id
+    && (typeof sender.url !== "string" || sender.url.startsWith(EXT_BASE));
+
+  if (fromExtensionPage) {
     handlePageMessage(message)
       .then(sendResponse)
       .catch((e) => sendResponse(respondErr(e)));

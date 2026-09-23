@@ -1,5 +1,18 @@
 # Changelog
 
+## v2.0.3 — 2026-09-24
+
+### Fixed — editor/dashboard/settings pages could never load: "No response from the recorder service."
+
+Live-reported again after v2.0.2: opening the editor (`editor.html?id=…`) still failed at boot with `Error: No response from the recorder service.` (editor.js boot guard).
+
+- **Root cause: message misrouting by `sender.tab`.** The background routed messages with `!sender.tab && sender.id === chrome.runtime.id`, assuming a missing `sender.tab` means "sent from an extension page". In reality, extension pages opened **in a browser tab** (editor, dashboard, settings, preview, print view — everything opened via `chrome.tabs.create` or `location.href`) DO carry `sender.tab`; only the popup and the service worker lack it. Every message from those pages was therefore delivered to the content-script branch, which silently dropped `GET_SETTINGS` / `GET_TUTORIAL` / `GET_SUMMARIES` / etc. after 3 retries — a deterministic boot failure. This also explains the persistently empty tutorial list on the dashboard.
+- **Routing now keys on the sender URL**, never on the absence of `sender.tab`: same-extension senders whose `sender.url` starts with the extension's own `chrome-extension://<id>/` base are treated as extension pages; content scripts always carry the host page's `http(s)` URL and keep going to the content branch. Popup (`chrome-extension://…/popup.html`) is covered by the same rule.
+- **Regression proven both ways**: a live harness against the old code reproduces the exact bug (no response for a tab-hosted editor sender) while the fixed code responds `ok:true`; the message-bus suite gains a dedicated routing section — tab-hosted editor/dashboard senders now receive `GET_SETTINGS`, `GET_UI_STATE`, `GET_SUMMARIES`, and `PING` responses, and a content-script sender (same extension id + `https` URL) is proven to never reach page handlers.
+- **`bgCall` backoff hardened** — 2 retries @ 350 ms became 3 retries with escalating backoff (250/500/1000 ms), so a cold-starting service worker under load still gets answered.
+
+**Tests: 157/157 pass** (new: extension-page routing section — 5 assertions incl. content-script isolation; updated bgCall retry-count semantics).
+
 ## v2.0.2 — 2026-09-24
 
 ### Fixed — empty recordings + "No response from the recorder service."

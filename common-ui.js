@@ -1,8 +1,9 @@
 const TRANSIENT_RE = /message port closed|receiving end does not exist/i;
+const BACKOFF_MS = [250, 500, 1000];
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
-export function bgCall(message, retries = 2) {
+export function bgCall(message, retries = 3) {
   const attempt = (n) => Promise.resolve()
     .then(() => chrome.runtime.sendMessage(message))
     .then((res) => {
@@ -11,11 +12,13 @@ export function bgCall(message, retries = 2) {
         return res;
       }
       if (n <= 0) throw new Error("No response from the recorder service.");
-      return sleep(350).then(() => attempt(n - 1));
+      const wait = BACKOFF_MS[Math.min(BACKOFF_MS.length - 1, retries - n)];
+      return sleep(wait).then(() => attempt(n - 1));
     })
     .catch((e) => {
       if (n > 0 && e instanceof Error && TRANSIENT_RE.test(e.message)) {
-        return sleep(350).then(() => attempt(n - 1));
+        const wait = BACKOFF_MS[Math.min(BACKOFF_MS.length - 1, retries - n)];
+        return sleep(wait).then(() => attempt(n - 1));
       }
       throw e;
     });

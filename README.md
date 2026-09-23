@@ -9,11 +9,11 @@ Everything stays on your device. No accounts, no cloud uploads, no telemetry.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-34A853)](https://developer.chrome.com/docs/extensions/mv3/)
-[![Tests: 151](https://img.shields.io/badge/Tests-151%20passing-success)](./test-suite.mjs)
+[![Tests: 157](https://img.shields.io/badge/Tests-157%20passing-success)](./test-suite.mjs)
 [![CI](https://github.com/kimpearce888/browser-tutorial-recorder/actions/workflows/ci.yml/badge.svg)](https://github.com/kimpearce888/browser-tutorial-recorder/actions/workflows/ci.yml)
-[![Version: 2.0.2](https://img.shields.io/badge/Version-2.0.2-ff7352)](./manifest.json)
+[![Version: 2.0.3](https://img.shields.io/badge/Version-2.0.3-ff7352)](./manifest.json)
 
-**Version: v2.0.2** — a complete, from-scratch rewrite of the recording engine built for reliability.
+**Version: v2.0.3** — a complete, from-scratch rewrite of the recording engine built for reliability.
 
 ---
 
@@ -136,7 +136,7 @@ Click the extension's **refresh icon** in `chrome://extensions` after updating. 
 
 ---
 
-## Architecture (v2.0.0 — fresh rewrite, hardened in v2.0.1–v2.0.2)
+## Architecture (v2.0.0 — fresh rewrite, hardened in v2.0.1–v2.0.3)
 
 The v2.0.0 recording engine was rebuilt from scratch around four reliability principles:
 
@@ -172,7 +172,7 @@ The v2.0.0 recording engine was rebuilt from scratch around four reliability pri
 ├── exporter.js                # Renders annotated canvas + exports 7 formats
 ├── gif-encoder.js             # GIF89a + LZW encoder
 ├── theme-boot.js, theme.css   # Theme bootstrap + variables
-├── test-suite.mjs             # Automated test suite (151 tests)
+├── test-suite.mjs             # Automated test suite (157 tests)
 ├── package.json               # Node dev dependencies (jsdom for tests)
 ├── .github/workflows/ci.yml   # CI workflow
 └── icons/                     # Extension icons (16/32/48/128 PNG)
@@ -182,7 +182,7 @@ The v2.0.0 recording engine was rebuilt from scratch around four reliability pri
 
 ## Quality assurance
 
-- **151 automated tests** covering `recorder-core.js`, `shared.js`, `settings-store.js`, `gif-encoder.js`, `exporter.js`, and the real `content.js` (evaluated in jsdom)
+- **157 automated tests** covering `recorder-core.js`, `shared.js`, `settings-store.js`, `gif-encoder.js`, `exporter.js`, and the real `content.js` (evaluated in jsdom)
 - **Static analysis** — all JS files pass `node --check` syntax validation
 - **CI workflow** — tests auto-run on every push and pull request via GitHub Actions
 

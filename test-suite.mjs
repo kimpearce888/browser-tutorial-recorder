@@ -484,6 +484,7 @@ section("integration — background ⇄ content message bus (loop regression)");
   globalThis.chrome = {
     runtime: {
       id: "btr-test-ext",
+      getURL: (p) => `chrome-extension://btr-test-ext/${p || ""}`,
       onMessage: { addListener: (fn) => bgMessageHandlers.push(fn) }
     },
     storage: {
@@ -524,7 +525,8 @@ section("integration — background ⇄ content message bus (loop regression)");
     const handlers = [];
     window.chrome = {
       runtime: {
-        sendMessage: (msg) => { deliverToBackground(msg, { tab: { id: 1, windowId: 1 }, frameId, url }); return Promise.resolve(); },
+        // Real content scripts carry our extension id AND the host page URL.
+        sendMessage: (msg) => { deliverToBackground(msg, { id: "btr-test-ext", tab: { id: 1, windowId: 1 }, frameId, url }); return Promise.resolve(); },
         onMessage: { addListener: (fn) => handlers.push(fn) }
       }
     };
@@ -538,7 +540,8 @@ section("integration — background ⇄ content message bus (loop regression)");
   const sub = makeFrame(1, "https://cdn.example.com/embed");
 
   const startRes = await new Promise((resolve) => {
-    bgMessageHandlers[0]({ type: "START_RECORDING" }, { id: "btr-test-ext" }, resolve);
+    // The popup is an extension page WITHOUT a tab; its sender.url is our own.
+    bgMessageHandlers[0]({ type: "START_RECORDING" }, { id: "btr-test-ext", url: "chrome-extension://btr-test-ext/popup.html" }, resolve);
   });
   assert(startRes && startRes.ok === true, "START_RECORDING responds ok over the bus");
 
@@ -570,6 +573,115 @@ section("integration — background ⇄ content message bus (loop regression)");
 
   top.dom.window.close();
   sub.dom.window.close();
+}
+
+/* ------------------------------------------------------------------ */
+section("integration — extension pages hosted in tabs reach page handlers");
+
+{
+  const CAP = 300;
+  const bus = { count: 0, overflow: false, log: [] };
+  const bgMessageHandlers = [];
+
+  function deliverToBackground(message, sender) {
+    bus.count++;
+    bus.log.push(`c2bg:${message && message.type}`);
+    if (bus.overflow) return;
+    for (const h of [...bgMessageHandlers]) h(message, sender, () => {});
+  }
+
+  const TAB1 = { id: 1, windowId: 1, url: "https://example.com/app", title: "Example App", active: true };
+  const tabsMap = new Map([[1, TAB1]]);
+  const store = { local: new Map(), session: new Map() };
+  const mkStorage = (m) => ({
+    get: async (keys) => {
+      const out = {};
+      for (const k of (Array.isArray(keys) ? keys : [keys])) if (m.has(k)) out[k] = m.get(k);
+      return out;
+    },
+    set: async (obj) => { for (const [k, v] of Object.entries(obj)) m.set(k, v); },
+    remove: async (keys) => { for (const k of (Array.isArray(keys) ? keys : [keys])) m.delete(k); }
+  });
+
+  globalThis.chrome = {
+    runtime: {
+      id: "btr-test-ext",
+      getURL: (p) => `chrome-extension://btr-test-ext/${p || ""}`,
+      onMessage: { addListener: (fn) => bgMessageHandlers.push(fn) }
+    },
+    storage: {
+      local: mkStorage(store.local),
+      session: mkStorage(store.session),
+      onChanged: { addListener: () => {} }
+    },
+    action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
+    scripting: { executeScript: async () => [{ result: null }] },
+    commands: { onCommand: { addListener: () => {} } },
+    tabs: {
+      query: async (q) => (q && q.active ? [TAB1] : [...tabsMap.values()]),
+      get: async (id) => tabsMap.get(id) || null,
+      create: async (o) => ({ id: 99, ...o }),
+      update: async () => ({}),
+      remove: async () => {},
+      sendMessage: async () => {},
+      captureVisibleTab: async () => "data:image/png;base64,MOCKSHOT",
+      onUpdated: { addListener: () => {} },
+      onActivated: { addListener: () => {} },
+      onCreated: { addListener: () => {} },
+      onRemoved: { addListener: () => {} }
+    }
+  };
+
+  // Query string busts the ES module cache: this evaluates a FRESH copy of
+  // background.js against this section's chrome mock, so the routing
+  // assertions below exercise the real listener registration path.
+  await import("./background.js?ext-page-routing");
+
+  // Regression: editor.html / dashboard.html / settings.html / preview.html are
+  // opened in browser tabs via chrome.tabs.create or location.href. Their
+  // messages carry sender.tab (the tab hosting the page) AND a
+  // chrome-extension://<id>/ sender.url. The old !sender.tab check misrouted
+  // them into the content-script branch, which silently dropped GET_SETTINGS /
+  // GET_TUTORIAL / GET_SUMMARIES — the "No response from the recorder service"
+  // boot failure. Tab identity must be irrelevant for extension pages.
+  // Every call races a 500 ms timeout so a routing regression fails the test
+  // cleanly instead of hanging the suite on a never-resolving sendResponse.
+  const callBg = (message, sender) => Promise.race([
+    new Promise((resolve) => { bgMessageHandlers[0](message, sender, resolve); }),
+    new Promise((r) => setTimeout(() => r(undefined), 500))
+  ]);
+
+  const editorSender = {
+    id: "btr-test-ext",
+    tab: { id: 42, windowId: 3 },
+    frameId: 0,
+    url: "chrome-extension://btr-test-ext/editor.html?id=tut-abc123"
+  };
+
+  const settingsRes = await callBg({ type: "GET_SETTINGS" }, editorSender);
+  assert(settingsRes && settingsRes.ok === true, "tab-hosted editor page receives GET_SETTINGS response");
+  assert(settingsRes.settings && typeof settingsRes.settings === "object", "GET_SETTINGS returns settings payload");
+
+  const uiRes = await callBg({ type: "GET_UI_STATE" }, editorSender);
+  assert(uiRes && uiRes.ok === true && uiRes.uiState, "tab-hosted page receives GET_UI_STATE response");
+
+  // GET_SUMMARIES touches IndexedDB (unavailable in Node — the response body
+  // is ok:false here), so this only asserts that A response is delivered at
+  // all: under the old misrouting no response ever arrives.
+  const summariesRes = await callBg({ type: "GET_SUMMARIES" }, editorSender);
+  assert(summariesRes !== undefined, "tab-hosted page receives a GET_SUMMARIES response (routing proven)");
+
+  const dashSender = { id: "btr-test-ext", tab: { id: 43, windowId: 3 }, frameId: 0, url: "chrome-extension://btr-test-ext/dashboard.html" };
+  const pingRes = await callBg({ type: "PING" }, dashSender);
+  assert(pingRes && pingRes.ok === true, "tab-hosted dashboard page receives PING response");
+
+  // Content scripts (our extension id + host page https URL) must NOT reach
+  // page handlers even when a tab is attached.
+  let contentReachedPage = false;
+  bgMessageHandlers[0]({ type: "PING" }, { id: "btr-test-ext", tab: { id: 1, windowId: 1 }, frameId: 0, url: "https://example.com/app" }, () => { contentReachedPage = true; });
+  await new Promise((r) => setTimeout(r, 120));
+  assert(contentReachedPage === false, "content-script sender never reaches page handlers");
+
   delete globalThis.chrome;
 }
 
@@ -600,7 +712,7 @@ section("common-ui.js — bgCall retries transient no-response");
   const { bgCall } = await import("./common-ui.js");
   try { await bgCall({ type: "X" }); assert(false, "port-closed propagates after retries"); }
   catch (e) { assert(String(e.message).includes("port closed"), "port-closed error surfaced"); }
-  eq(calls, 3, "port-closed retried then gave up");
+  eq(calls, 4, "port-closed retried then gave up");
 }
 {
   globalThis.chrome = { runtime: { sendMessage: async () => ({ ok: false, error: "Tutorial not found." }) } };
