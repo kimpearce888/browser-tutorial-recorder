@@ -18,7 +18,6 @@ function render() {
   $("number").textContent = String(stepIndex + 1).padStart(2, "0");
   $("description").textContent = step.description || "";
 
-
   const imgUrl = sanitizeImageUrl(step.screenshot?.image);
   const imgEl = $("image");
   if (imgUrl) {
@@ -38,7 +37,6 @@ function render() {
 
   renderAnnotations(step);
 
-
   clearTimeout(watchTimer);
   if (mode === "watch" && stepIndex < tutorial.steps.length - 1) {
     watchTimer = setTimeout(() => {
@@ -53,10 +51,7 @@ function renderAnnotations(step) {
   const size = canvasSize(step);
   layer.innerHTML = "";
 
-
-
-
-  const layerScale = layer.getBoundingClientRect().width / size.width || 1;
+  const layerScale = Number.isFinite(layer.getBoundingClientRect().width / size.width) ? layer.getBoundingClientRect().width / size.width : 1;
 
   for (const annotation of step.annotations || []) {
     const box = annotationBox(annotation);
@@ -75,7 +70,6 @@ function renderAnnotations(step) {
 
 function paintAnnotation(node, a, size, layerScale) {
 
-
   const num = (v, fallback = 0) => {
     const n = Number(v);
     return Number.isFinite(n) ? n : fallback;
@@ -88,7 +82,6 @@ function paintAnnotation(node, a, size, layerScale) {
   if (a.type === "arrow") {
     const color = escapeHtml(a.color || "#ff7352");
 
-
     const box = annotationBox(a);
     node.innerHTML = `
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
@@ -100,7 +93,6 @@ function paintAnnotation(node, a, size, layerScale) {
     return;
   }
   if (a.type === "text") {
-
 
     const scale = layerScale || 1;
     node.textContent = a.text || "Note";
@@ -132,7 +124,6 @@ function paintAnnotation(node, a, size, layerScale) {
   }
   if (a.type === "spotlight") {
 
-
     node.style.boxShadow = `0 0 0 9999px ${withAlpha(a.color || "#172238", a.opacity ?? 0.78)}`;
     return;
   }
@@ -156,10 +147,6 @@ async function init() {
   autoplaySpeed = settings.autoplaySpeed || 3000;
 
   const id = new URLSearchParams(location.search).get("id");
-
-
-
-
 
   const raw = id ? await dbGet(id) : null;
   tutorial = raw ? normalizeTutorial(raw) : null;
@@ -189,15 +176,12 @@ $("next").onclick = () => {
     render();
   } else {
 
-
     try {
       chrome.tabs.getCurrent((tab) => {
         if (tab?.id) chrome.tabs.remove(tab.id).catch(() => window.close());
         else window.close();
       });
     } catch (e) {
-
-
 
       try { window.close(); } catch (_) { location.href = "dashboard.html"; }
     }
@@ -214,8 +198,6 @@ document.querySelectorAll(".modes button").forEach((button) => {
 $("close").onclick = (event) => {
   event.preventDefault();
 
-
-
   try {
     chrome.tabs.getCurrent((tab) => {
       if (tab?.id) chrome.tabs.remove(tab.id).catch(() => window.close());
@@ -227,3 +209,4 @@ $("close").onclick = (event) => {
 };
 
 init().catch((error) => alert(error.message));
+window.addEventListener("unload", () => { if (watchTimer) clearTimeout(watchTimer); });

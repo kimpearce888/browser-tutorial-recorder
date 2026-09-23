@@ -9,11 +9,11 @@ Everything stays on your device. No accounts, no cloud uploads, no telemetry.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-34A853)](https://developer.chrome.com/docs/extensions/mv3/)
-[![Tests: 91](https://img.shields.io/badge/Tests-91%20passing-success)](./test-suite.mjs)
+[![Tests: 173](https://img.shields.io/badge/Tests-173%20passing-success)](./test-suite.mjs)
 [![CI](https://github.com/kimpearce888/browser-tutorial-recorder/actions/workflows/ci.yml/badge.svg)](https://github.com/kimpearce888/browser-tutorial-recorder/actions/workflows/ci.yml)
-[![Version: 1.0.2](https://img.shields.io/badge/Version-1.0.2-ff7352)](./manifest.json)
+[![Version: 1.0.3](https://img.shields.io/badge/Version-1.0.3-ff7352)](./manifest.json)
 
-**Version: v1.0.2**
+**Version: v1.0.3**
 
 ---
 
@@ -193,7 +193,7 @@ Click the extension's **refresh icon** in `chrome://extensions` after updating. 
 ├── gif-encoder.js            # GIF89a + LZW encoder
 ├── theme-boot.js             # Anti-flash theme bootstrap
 ├── theme.css                 # CSS variables for light/dark/high-contrast themes
-├── test-suite.mjs            # Automated test suite (91 tests)
+├── test-suite.mjs            # Automated test suite (173 tests)
 ├── package.json              # Node dev dependencies (jsdom for tests)
 ├── .github/workflows/ci.yml  # CI workflow
 └── icons/                    # Extension icons (16/32/48/128 PNG)
@@ -240,7 +240,7 @@ Click the extension's **refresh icon** in `chrome://extensions` after updating. 
 
 ## Quality assurance
 
-- **91 automated tests** covering `shared.js`, `gif-encoder.js`, `settings-store.js`, `exporter.js`, `background.js`, and integration paths
+- **173 automated tests** covering `shared.js`, `gif-encoder.js`, `settings-store.js`, `exporter.js`, `background.js`, and integration paths
 - **Static analysis** — all 14 JS/mjs files pass syntax validation
 - **CI workflow** — tests auto-run on every push and pull request via GitHub Actions
 - **Deep code review** — every file has been read line-by-line across multiple audit rounds

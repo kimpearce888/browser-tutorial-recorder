@@ -33,6 +33,7 @@ function lzwEncode(indices, minCodeSize) {
   for (let i = 0; i < clearCode; i++) dict.set(String(i), i);
   const writer = new BitWriter();
   writer.write(clearCode, codeSize);
+  if (!indices.length) { writer.write(eoiCode, codeSize); return writer.getBytes(); }
   let prefix = String(indices[0]);
   for (let i = 1; i < indices.length; i++) {
     const key = prefix + "," + indices[i];
@@ -41,14 +42,6 @@ function lzwEncode(indices, minCodeSize) {
       writer.write(dict.get(prefix), codeSize);
       if (nextCode < 4096) {
         dict.set(key, nextCode); nextCode++;
-
-
-
-
-
-
-
-
         if (nextCode > (1 << codeSize) && codeSize < 12) codeSize++;
       } else {
         writer.write(clearCode, codeSize);
@@ -98,12 +91,8 @@ class BitWriter {
 }
 
 function subBlocks(bytes) {
-
-
   let total = 1;
-  for (let i = 0; i < bytes.length; i += 255) {
-    total += 1 + Math.min(255, bytes.length - i);
-  }
+  for (let i = 0; i < bytes.length; i += 255) total += 1 + Math.min(255, bytes.length - i);
   const out = new Uint8Array(total);
   let p = 0;
   for (let i = 0; i < bytes.length; i += 255) {
@@ -116,67 +105,42 @@ function subBlocks(bytes) {
   return out;
 }
 
-function u16le(value) { return [value & 0xff, (value >> 8) & 0xff]; }
+const u16le = v => [v & 0xff, (v >> 8) & 0xff];
 
 function buildGif(frames, options = {}) {
   const loop = options.loop !== false;
+  const MAX_DIM = 65535;
+  let width = frames.length ? Math.max(...frames.map(f => f.width)) : 1;
+  let height = frames.length ? Math.max(...frames.map(f => f.height)) : 1;
+  const scale = Math.min(width > MAX_DIM ? MAX_DIM / width : 1, height > MAX_DIM ? MAX_DIM / height : 1);
 
-  const MAX_GIF_DIM = 65535;
-  let width = Math.max(...frames.map((f) => f.width));
-  let height = Math.max(...frames.map((f) => f.height));
-
-  const scaleW = width > MAX_GIF_DIM ? MAX_GIF_DIM / width : 1;
-  const scaleH = height > MAX_GIF_DIM ? MAX_GIF_DIM / height : 1;
-  const scale = Math.min(scaleW, scaleH);
   if (scale < 1) {
-    const newWidth = Math.round(width * scale);
-    const newHeight = Math.round(height * scale);
-
+    width = Math.round(width * scale);
+    height = Math.round(height * scale);
     frames = frames.map(f => {
-      const fw = Math.round(f.width * scale);
-      const fh = Math.round(f.height * scale);
-      const newRgba = new Uint8Array(fw * fh * 4);
-
-      for (let y = 0; y < fh; y++) {
-        for (let x = 0; x < fw; x++) {
-          const srcX = Math.floor(x / scale);
-          const srcY = Math.floor(y / scale);
-          const srcIdx = (srcY * f.width + srcX) * 4;
-          const dstIdx = (y * fw + x) * 4;
-          newRgba[dstIdx] = f.rgba[srcIdx];
-          newRgba[dstIdx + 1] = f.rgba[srcIdx + 1];
-          newRgba[dstIdx + 2] = f.rgba[srcIdx + 2];
-          newRgba[dstIdx + 3] = f.rgba[srcIdx + 3];
-        }
+      const fw = Math.round(f.width * scale), fh = Math.round(f.height * scale);
+      const rgba = new Uint8Array(fw * fh * 4);
+      for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++) {
+        const si = (Math.floor(y / scale) * f.width + Math.floor(x / scale)) * 4;
+        const di = (y * fw + x) * 4;
+        rgba[di] = f.rgba[si]; rgba[di+1] = f.rgba[si+1]; rgba[di+2] = f.rgba[si+2]; rgba[di+3] = f.rgba[si+3];
       }
-      return { ...f, width: fw, height: fh, rgba: newRgba };
+      return { ...f, width: fw, height: fh, rgba };
     });
-    width = newWidth;
-    height = newHeight;
   }
 
-
-
-
   const estimated = 32 + 768 + frames.length * (width * height + 768 + 64);
-
-
   let bytes = new Uint8Array(Math.max(estimated, 1024));
   let pos = 0;
   const push = (...vals) => { for (const v of vals) bytes[pos++] = v; };
-  const pushBytes = (arr) => {
-    if (arr instanceof Uint8Array) {
-      bytes.set(arr, pos);
-      pos += arr.length;
-    } else {
-      for (const v of arr) bytes[pos++] = v;
-    }
+  const pushBytes = arr => {
+    if (arr instanceof Uint8Array) { bytes.set(arr, pos); pos += arr.length; }
+    else { for (const v of arr) bytes[pos++] = v; }
   };
-  const growIfNeeded = (extra) => {
+  const growIfNeeded = extra => {
     if (pos + extra + 16 > bytes.length) {
       const next = new Uint8Array(bytes.length * 2 + extra + 64);
-      next.set(bytes);
-      bytes = next;
+      next.set(bytes); bytes = next;
     }
   };
 
@@ -189,23 +153,14 @@ function buildGif(frames, options = {}) {
   }
   for (const frame of frames) {
     const { indices, hasTransparent, transparentIndex } = quantize(frame.rgba);
-    push(0x21, 0xf9, 4);
-    push(hasTransparent ? 0x09 : 0x08);
-    push(...u16le(Math.round((frame.delayMs || 100) / 10)));
-    push(hasTransparent ? transparentIndex : 0);
-    push(0);
-    push(0x2c, ...u16le(0), ...u16le(0), ...u16le(frame.width), ...u16le(frame.height));
-    push(0x87);
-
+    push(0x21, 0xf9, 4, hasTransparent ? 0x09 : 0x08);
+    push(...u16le(Math.round((frame.delayMs ?? 100) / 10)));
+    push(hasTransparent ? transparentIndex : 0, 0);
+    push(0x2c, ...u16le(0), ...u16le(0), ...u16le(frame.width), ...u16le(frame.height), 0x87);
     growIfNeeded(768);
-    for (let i = 0; i < 256; i++) {
-      bytes[pos++] = PALETTE[i][0];
-      bytes[pos++] = PALETTE[i][1];
-      bytes[pos++] = PALETTE[i][2];
-    }
+    for (let i = 0; i < 256; i++) { bytes[pos++] = PALETTE[i][0]; bytes[pos++] = PALETTE[i][1]; bytes[pos++] = PALETTE[i][2]; }
     push(8);
-    const lzwBytes = lzwEncode(indices, 8);
-    const subBlock = subBlocks(lzwBytes);
+    const subBlock = subBlocks(lzwEncode(indices, 8));
     growIfNeeded(subBlock.length);
     pushBytes(subBlock);
   }

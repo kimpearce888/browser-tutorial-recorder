@@ -8,8 +8,6 @@ import { getSettings } from "./settings-store.js";
 
 function safeName(value) {
 
-
-
   const cleaned = (value || "tutorial")
     .replace(/[^\p{L}\p{N}]+/gu, "-")
     .replace(/^[-_]+|[-_]+$/g, "")
@@ -20,7 +18,6 @@ function safeName(value) {
 
 export function download(name, content, type) {
 
-
   name = String(name || "download").replace(/[/\\:*?"<>|]/g, "-").slice(0, 200);
   const blob = content instanceof Blob ? content : new Blob([content], { type });
   const url = URL.createObjectURL(blob);
@@ -30,20 +27,11 @@ export function download(name, content, type) {
   document.body.appendChild(link);
   link.click();
   link.remove();
-  // E3 fix: was 1500ms, which could truncate large downloads (multi-hundred-MB
-  // JSON exports, large GIFs) if the browser hadn't finished reading the blob.
-  // 30s is a safer upper bound; the blob is freed by GC even if this fires late.
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 
 export function loadImage(source) {
   return new Promise((resolve, reject) => {
-    // Sanitize the image URL as defense-in-depth. A crafted
-    // tutorial JSON could set screenshot.image to "javascript:..." or another
-    // non-image scheme. Modern browsers block Image.src = "javascript:..." but
-    // sanitizing here ensures the URL is a valid data:image/... URL before
-    // the Image element tries to load it. Matches the sanitization used in
-    // editor.js, preview.js, and dashboard.js.
     const safe = sanitizeImageUrl(source);
     if (!safe) return reject(new Error("This step has no screenshot."));
     const image = new Image();
@@ -52,10 +40,6 @@ export function loadImage(source) {
     image.src = safe;
   });
 }
-
-// ---------------------------------------------------------------------------
-// Canvas rendering (used by PNG / PDF / Markdown / HTML exports)
-// ---------------------------------------------------------------------------
 
 function roundedRect(ctx, x, y, width, height, radius) {
   const r = Math.min(radius, width / 2, height / 2);
@@ -80,24 +64,17 @@ export async function annotatedCanvas(step) {
 }
 
 export async function annotatedDataUrl(step, format = "png") {
-  // P1-24 fix: use PNG by default for lossless UI screenshots.
-  // JPEG was causing text degradation and compression artifacts.
   const canvas = await annotatedCanvas(step);
   if (format === "jpeg") return canvas.toDataURL("image/jpeg", 0.9);
   return canvas.toDataURL("image/png");
 }
 
-// Paint each annotation onto the export canvas (flattening blur / redaction).
-// Fix H14: spotlight annotations are drawn LAST so the dark overlay doesn't
-// hide the other annotations (which is what happens in the editor DOM).
 function drawAnnotations(ctx, image, step) {
   const base = canvasSize(step);
   const sx = ctx.canvas.width / base.width;
   const sy = ctx.canvas.height / base.height;
 
   const annotations = step.annotations || [];
-  // Draw non-spotlight annotations first, then spotlights on top — matches
-  // the visual stacking in the editor where spotlight is a single overlay.
   const ordered = [
     ...annotations.filter((a) => a.type !== "spotlight"),
     ...annotations.filter((a) => a.type === "spotlight")
@@ -117,34 +94,21 @@ function drawAnnotations(ctx, image, step) {
     ctx.rotate(rotation);
 
     if (a.type === "arrow") drawArrow(ctx, a, width, height);
-    // v1.0.2 #2: pass the pre-translation canvas-space (x, y) as source
-    // coordinates so drawBlur can crop the correct region from the image.
     else if (a.type === "blur") drawBlur(ctx, image, x, y, -width / 2, -height / 2, width, height, Number(a.blur || 10));
     else if (a.type === "redaction") {
       ctx.fillStyle = a.color || "#202b40";
       ctx.fillRect(-width / 2, -height / 2, width, height);
     } else if (a.type === "spotlight") {
-      // Build the overlay-with-hole on a SEPARATE transparent canvas,
-      // then composite the finished shape onto the main canvas in one
-      // source-over draw. Drawing directly on `ctx` (which already has the
-      // opaque screenshot painted into it) meant `destination-out` could
-      // only make the already-darkened pixels more transparent — it couldn't
-      // bring back the screenshot pixels that source-over had overwritten,
-      // leaving a transparent hole instead of the highlighted content.
       const overlay = document.createElement("canvas");
       overlay.width = ctx.canvas.width;
       overlay.height = ctx.canvas.height;
       const octx = overlay.getContext("2d");
-      octx.setTransform(ctx.getTransform()); // match translate + rotate
-      // Opacity is already baked into withAlpha() below — don't also
-      // set globalAlpha or the overlay ends up at opacity² and the hole-punch
-      // is weakened, leaving a residual tint in the spotlighted area.
+      octx.setTransform(ctx.getTransform());
       octx.fillStyle = withAlpha(a.color || "#172238", a.opacity ?? 0.78);
       octx.fillRect(-ctx.canvas.width, -ctx.canvas.height, ctx.canvas.width * 2, ctx.canvas.height * 2);
       octx.globalCompositeOperation = "destination-out";
       octx.fillStyle = "#000";
       octx.fillRect(-width / 2, -height / 2, width, height);
-      // Composite the finished overlay onto the main canvas in absolute coords.
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.globalAlpha = 1;
       ctx.drawImage(overlay, 0, 0);
@@ -163,14 +127,10 @@ function drawAnnotations(ctx, image, step) {
       roundedRect(ctx, -width / 2, -height / 2, width, height, 6 * sx);
       ctx.fill();
       ctx.fillStyle = a.textColor || "#fff";
-      // E1 fix: the next 3 lines (ctx.font/textAlign/textBaseline) were
-      // immediately overwritten by the P2-10 wrap fix below. Remove the dup.
-      // P2-10 fix: wrap long text instead of clipping it
       const fontSize = Math.max(8, Number(a.fontSize || 22) * sx);
       ctx.font = `${a.fontWeight || 700} ${fontSize}px system-ui`;
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
-      // Word-wrap the text within the annotation box
       const maxTextWidth = width - 24 * sx;
       const text = String(a.text || "Add a note").slice(0, 500);
       const words = text.split(" ");
@@ -184,12 +144,12 @@ function drawAnnotations(ctx, image, step) {
           ctx.fillText(line, -width / 2 + 12 * sx, lineY);
           line = word;
           lineY += lineHeight;
-          if (lineY + lineHeight > height / 2) break; // stop if we exceed the box
+          if (lineY + lineHeight > height / 2) { line = ""; break; }
         } else {
           line = testLine;
         }
       }
-      if (line) ctx.fillText(line, -width / 2 + 12 * sx, lineY);
+      if (line && lineY + lineHeight <= height / 2) ctx.fillText(line, -width / 2 + 12 * sx, lineY);
     } else {
       drawShape(ctx, a, width, height, sx);
     }
@@ -258,12 +218,6 @@ function drawArrow(ctx, a, width, height) {
   ctx.fill();
 }
 
-// v1.0.2 #2: drawBlur now takes source coordinates (srcX, srcY) in addition
-// to the destination coordinates (x, y). Uses the 9-arg drawImage form to
-// crop the same region being blurred from the source image, instead of the
-// 5-arg form which drew the ENTIRE screenshot squashed into the blur box.
-// Without this fix, blur annotations showed a warped miniature of the whole
-// page instead of blurring the sensitive content in place.
 function drawBlur(ctx, image, srcX, srcY, x, y, width, height, amount) {
   const pad = Math.max(12, amount * 2);
   ctx.save();
@@ -273,33 +227,15 @@ function drawBlur(ctx, image, srcX, srcY, x, y, width, height, amount) {
   ctx.filter = `blur(${amount}px)`;
   ctx.drawImage(
     image,
-    srcX - pad, srcY - pad, width + pad * 2, height + pad * 2,  // source crop
-    x - pad, y - pad, width + pad * 2, height + pad * 2          // destination
+    srcX - pad, srcY - pad, width + pad * 2, height + pad * 2,
+    x - pad, y - pad, width + pad * 2, height + pad * 2
   );
   ctx.restore();
 }
 
-// ---------------------------------------------------------------------------
-// Public export entry point
-// ---------------------------------------------------------------------------
-
-// GIF export: normalizes every frame to the first frame's aspect ratio with
-// a white letterbox background so the GIF89a encoder doesn't have to deal
-// with per-frame dimensions.
 async function exportGif(tutorial) {
   const steps = tutorial.steps.filter((step) => step.screenshot?.image);
   if (!steps.length) throw new Error("There are no screenshots to export.");
-  // E2/B3 fix: size guard must use the ACTUAL screenshot dimensions, not a
-  // hardcoded 1280×720. A 4K screenshot (3840×2160) is ~31.6 MiB of RGBA per
-  // frame, not ~3.5 MiB. The exporter holds both `sourceCanvases[]` and
-  // `frames[].rgba` in memory simultaneously, so a 20-step 4K tutorial would
-  // need ~1.2 GiB for those two arrays alone.
-  //
-  // We compute the peak estimate from the LARGEST step's screenshot
-  // dimensions (the target frame size is derived from the first frame, but
-  // each source canvas temporarily holds its own dimensions' worth of RGBA).
-  // Use the stored screenshot width/height (CSS px); fall back to 1280×720
-  // only if the record is missing dimensions.
   const perFrameBytes = (w, h) => (w | 0) * (h | 0) * 4;
   let maxFrameBytes = 1280 * 720 * 4;
   for (const step of steps) {
@@ -308,29 +244,19 @@ async function exportGif(tutorial) {
     const b = perFrameBytes(w, h);
     if (b > maxFrameBytes) maxFrameBytes = b;
   }
-  // sourceCanvases[] holds `steps.length` canvases at their native size,
-  // and frames[] holds `steps.length` RGBA buffers at the target (first
-  // frame) size. The peak is approximately steps.length × max(sourceSize, targetSize).
-  // We use the max of the two for a conservative single-frame estimate.
-  const estimatedBytes = steps.length * maxFrameBytes * 2; // ×2 for source + target
+  const estimatedBytes = steps.length * maxFrameBytes * 2;
   const MEM_LIMIT = 250 * 1024 * 1024;
   if (estimatedBytes > MEM_LIMIT) {
     throw new Error(`GIF export would use ~${Math.round(estimatedBytes / 1024 / 1024)} MB of memory (based on actual screenshot dimensions). Try fewer steps or smaller screenshots.`);
   }
   const { gifSpeed } = await getSettings();
 
-  // Render each annotated step to its own canvas first. M5: yield to the
-  // event loop between frames so the UI stays responsive (the encoding itself
-  // is still CPU-bound, but at least rendering pauses don't compound).
   const sourceCanvases = [];
   for (let i = 0; i < steps.length; i++) {
     sourceCanvases.push(await annotatedCanvas(steps[i]));
-    // Yield so the browser can paint the loading indicator.
     if (i % 3 === 0) await new Promise((r) => setTimeout(r, 0));
   }
 
-  // Target dimensions: width from the first frame, height scaled to preserve
-  // its aspect ratio. Subsequent frames are letterboxed onto this canvas.
   const first = sourceCanvases[0];
   const targetWidth = Math.max(64, first.width);
   const targetHeight = Math.max(64, first.height);
@@ -344,7 +270,6 @@ async function exportGif(tutorial) {
     const ctx = out.getContext("2d");
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, targetWidth, targetHeight);
-    // Letterbox: scale preserving aspect ratio, centred.
     const scale = Math.min(targetWidth / canvas.width, targetHeight / canvas.height);
     const w = canvas.width * scale;
     const h = canvas.height * scale;
@@ -354,9 +279,8 @@ async function exportGif(tutorial) {
       width: targetWidth,
       height: targetHeight,
       rgba: new Uint8Array(data.buffer.slice(0)),
-      delayMs: gifSpeed || 1200
+      delayMs: gifSpeed ?? 1200
     });
-    // Yield between frames so the browser can paint / process events (M5).
     if (i % 2 === 0) await new Promise((r) => setTimeout(r, 0));
   }
 
@@ -364,7 +288,6 @@ async function exportGif(tutorial) {
   download(`${safeName(tutorial.title)}.gif`, blob, "image/gif");
 }
 
-// Plain-text export: a numbered list of step descriptions plus their action.
 function exportText(tutorial) {
   const lines = [];
   lines.push(tutorial.title || "Untitled tutorial");
@@ -388,7 +311,6 @@ async function exportTutorial(tutorial, kind, selectedStepIndex) {
   }
 
   if (kind === "png") {
-    // Throw instead of silently no-oping when no step is selected.
     const step = tutorial.steps[selectedStepIndex];
     if (!step) throw new Error("Select a step before exporting PNG.");
     const canvas = await annotatedCanvas(step);
@@ -405,8 +327,6 @@ async function exportTutorial(tutorial, kind, selectedStepIndex) {
     return;
   }
 
-  // PDF / print is handled by a dedicated print-export.html page.
-  // Handle popup-blocked case (was silently returning).
   if (kind === "print" || kind === "pdf") {
     const popup = window.open(`print-export.html?id=${encodeURIComponent(tutorial.id)}`, "_blank");
     if (!popup) throw new Error("Popup blocked. Allow popups for this site to export PDF.");
@@ -424,10 +344,6 @@ async function exportTutorial(tutorial, kind, selectedStepIndex) {
   }
 
   if (kind === "markdown") {
-    // P2-15 fix: escape Markdown-sensitive characters in user text
-    // E5 fix: drop `.` and `-` from the escape list (not special in body text),
-    // and flatten newlines so multi-line descriptions don't split into multiple
-    // paragraphs (which breaks the per-step ## Step N structure).
     const escapeMd = (text) => String(text || "")
       .replace(/([\\`*_{}\[\]()#+!|>])/g, "\\$1")
       .replace(/\r?\n/g, " ");
@@ -446,7 +362,6 @@ async function exportTutorial(tutorial, kind, selectedStepIndex) {
       const image = step.screenshot?.image ? await annotatedDataUrl(step) : "";
       parts.push(`<article><h2>Step ${step.number}</h2><p>${escapeHtml(step.description || "")}</p>${image ? `<img src="${image}" alt="Step ${step.number}">` : ""}</article>`);
     }
-    // v1.0.1: add viewport meta, print button, and better default styling.
     const html = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

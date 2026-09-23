@@ -56,7 +56,7 @@ function formatKeyDisplay(keys) {
       : part === "shift" ? (isMac ? "⇧" : "Shift")
       : part === "alt" ? (isMac ? "⌥" : "Alt")
       : part;
-    return `<kbd>${label}</kbd>`;
+    return `<kbd>${escapeHtml(label)}</kbd>`;
   }).join("+");
 }
 
@@ -81,18 +81,11 @@ document.addEventListener("keydown", (event) => {
   });
   if (conflict) { toast(`Already used by "${conflict[1].label}"`); return; }
 
-
-
   const finishRebind = (commands) => {
     const cmds = commands || [];
     const globalConflict = cmds.find((c) => {
       const binding = c.shortcut;
       if (!binding) return false;
-
-
-
-
-
 
       const normalized = binding.toLowerCase()
         .replace("macctrl", "mod")
@@ -180,9 +173,6 @@ function bindAppearanceControls() {
 async function renderStorage() {
   const tutorials = await dbGetAll();
 
-
-
-
   const steps = tutorials.reduce((sum, t) => sum + (Array.isArray(t.steps) ? t.steps.length : 0), 0);
   const bytes = new Blob([JSON.stringify(tutorials)]).size;
   const sizeStr = bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(0)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
@@ -209,9 +199,6 @@ function bindStorageControls() {
         const data = JSON.parse(text);
         const list = Array.isArray(data) ? data : [data];
 
-
-
-
         for (const item of list) {
           try {
             const tutorial = normalizeTutorial(item);
@@ -229,6 +216,7 @@ function bindStorageControls() {
     }
     event.target.value = "";
     await renderStorage();
+    if (imported === 0) { toast("No valid tutorials found"); return; }
     if (skipped > 0) {
       toast(`Imported ${imported} tutorial${imported === 1 ? "" : "s"}, skipped ${skipped} invalid ${skipped === 1 ? "entry" : "entries"}`);
     } else {
@@ -239,12 +227,9 @@ function bindStorageControls() {
     if (!confirm("Delete ALL tutorials? This cannot be undone.")) return;
     const tutorials = await dbGetAll();
 
-
-
     const ids = tutorials.map(t => t.id).filter(Boolean);
     await dbDeleteAll(ids);
     await renderStorage();
-
 
     try { chrome.runtime.sendMessage({ type: "TUTORIALS_CHANGED" }).catch(() => {}); } catch (_) {}
     toast("All tutorials deleted");
@@ -275,8 +260,6 @@ async function init() {
     bindAppearanceControls();
     bindStorageControls();
     renderAll();
-
-
 
     subscribe((newSettings) => {
       settings = newSettings;

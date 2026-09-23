@@ -11,7 +11,6 @@
 body {
   margin: 0;
 
-
 }
 
 button, input, textarea, select { font: inherit; }
@@ -222,7 +221,6 @@ button { cursor: pointer; }
   box-shadow: 0 20px 50px var(--shadow);
   max-width: 100%;
   max-height: 100%;
-
 
   min-width: min(400px, 100%);
   aspect-ratio: 16/9;

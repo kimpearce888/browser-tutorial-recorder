@@ -5,8 +5,19 @@ let activeSession = null;
 let finishedTutorial = null;
 let startedAt = 0;
 let ticker = null;
+let pausedAt = 0;
+let totalPausedMs = 0;
 
 const STATES = ["idle", "recording", "paused", "complete"];
+
+function updateElapsed() {
+  if (!activeSession) return;
+  let elapsed = Date.now() - startedAt - totalPausedMs;
+  if (activeSession.status === "paused" && pausedAt) {
+    elapsed -= (Date.now() - pausedAt);
+  }
+  $("elapsed").textContent = formatTime(Math.max(0, elapsed));
+}
 
 function show(name) {
   STATES.forEach((id) => $(id).classList.toggle("hidden", id !== name));
@@ -20,28 +31,43 @@ function formatTime(ms) {
 }
 
 function readExcludedDomains() {
-  try {
-    const raw = localStorage.getItem("btr-excluded-domains");
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
-    return [];
-  }
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.local.get("btr-excluded-domains", (result) => {
+        const arr = result?.["btr-excluded-domains"];
+        if (Array.isArray(arr)) {
+          try { localStorage.setItem("btr-excluded-domains", JSON.stringify(arr)); } catch (_) {}
+          resolve(arr);
+        } else {
+          const raw = localStorage.getItem("btr-excluded-domains");
+          const parsed = raw ? JSON.parse(raw) : [];
+          const fallback = Array.isArray(parsed) ? parsed : [];
+          if (fallback.length > 0) {
+            try { chrome.storage.local.set({ "btr-excluded-domains": fallback }); } catch (_) {}
+          }
+          resolve(fallback);
+        }
+      });
+    } catch (e) {
+      const raw = localStorage.getItem("btr-excluded-domains");
+      const parsed = raw ? JSON.parse(raw) : [];
+      resolve(Array.isArray(parsed) ? parsed : []);
+    }
+  });
 }
 
 function syncExcludedDomainsToStorage(arr) {
-  try { chrome.storage.local.set({ "btr-excluded-domains": arr }); } catch (_) {}
+  try {
+    chrome.storage.local.set({ "btr-excluded-domains": arr });
+    localStorage.setItem("btr-excluded-domains", JSON.stringify(arr));
+  } catch (_) {}
 }
 
 function send(type, callback) {
-
-
-
-
-
   chrome.runtime.sendMessage({ type }, (result) => {
     if (chrome.runtime.lastError) {
       alert(chrome.runtime.lastError.message || "The recorder service is unavailable. Please reload the extension.");
+      callback && callback({ ok: false, error: chrome.runtime.lastError.message });
       return;
     }
     callback && callback(result);
@@ -56,19 +82,17 @@ function renderSession(session) {
   }
 
   startedAt = session.startedAt;
+  pausedAt = session.status === "paused" ? Date.now() : 0;
+  totalPausedMs = session.totalPausedMs || 0;
   $("stepCount").textContent = session.steps.length;
   $("recordingTitle").textContent = session.title;
-  $("elapsed").textContent = formatTime(Date.now() - startedAt);
+  updateElapsed();
   show(session.status === "paused" ? "paused" : "recording");
 
   clearInterval(ticker);
   ticker = setInterval(() => {
-    $("elapsed").textContent = formatTime(Date.now() - startedAt);
+    updateElapsed();
     chrome.runtime.sendMessage({ type: "GET_STATE" }, (result) => {
-
-
-
-
 
       if (chrome.runtime.lastError || !result?.session) {
         clearInterval(ticker);
@@ -83,8 +107,6 @@ function renderSession(session) {
 
       $("recordingTitle").textContent = result.session.title || "";
 
-
-
       const targetState = result.session.status === "paused" ? "paused" : "recording";
       if ($(targetState)?.classList.contains("hidden")) show(targetState);
     });
@@ -95,19 +117,10 @@ window.addEventListener("unload", () => { if (ticker) clearInterval(ticker); });
 
 function loadRecent() {
 
-
-
-
-
-
-
-
   send("GET_TUTORIALS_SUMMARY", (result) => {
     const tutorials = (result?.tutorials || [])
       .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
       .slice(0, 3);
-
-
 
     $("recentList").innerHTML = tutorials.length
       ? tutorials.map((t) => {
@@ -132,7 +145,6 @@ function loadRecent() {
           </div>
         </div>`;
 
-
     $("recentList").querySelectorAll(".recent-item[data-id]").forEach((item) => {
       item.addEventListener("click", () => openEditor(item.dataset.id));
       item.style.cursor = "pointer";
@@ -151,30 +163,41 @@ function openDashboard() {
   window.close();
 }
 
-$("start").addEventListener("click", () => {
-  const excludedDomains = readExcludedDomains();
-  chrome.runtime.sendMessage({ type: "START_RECORDING", excludedDomains }, (result) => {
-
-
-
-    if (chrome.runtime.lastError) {
-      alert(chrome.runtime.lastError.message || "The recorder service is unavailable. Please reload the extension.");
+$("start").addEventListener("click", async () => {
+  const excludedDomains = await readExcludedDomains();
+  chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+    const tab = tabs?.[0];
+    if (!tab?.id || !tab.url || /^(chrome|edge|about|devtools|chrome-extension|chrome-untrusted|file|moz-extension|extension):/i.test(tab.url)) {
+      alert("Open a webpage first, then try recording.");
       return;
     }
-    if (!result?.ok) return alert(result?.error || "Recording could not start.");
-    renderSession(result.session);
+    chrome.runtime.sendMessage({ type: "START_RECORDING", excludedDomains, tabId: tab.id }, (result) => {
+      if (chrome.runtime.lastError) {
+        alert(chrome.runtime.lastError.message || "The recorder service is unavailable. Please reload the extension.");
+        return;
+      }
+      if (!result?.ok) return alert(result?.error || "Recording could not start.");
+      renderSession(result.session);
+    });
   });
 });
 
 $("pause").addEventListener("click", () => {
   send("PAUSE_RECORDING", (result) => {
-    if (result?.ok) renderSession(result.session || { ...activeSession, status: "paused" });
+    if (result?.ok) {
+      pausedAt = Date.now();
+      renderSession(result.session || { ...activeSession, status: "paused" });
+    }
   });
 });
 
 $("resume").addEventListener("click", () => {
   send("RESUME_RECORDING", (result) => {
-    if (result?.ok) renderSession(result.session || { ...activeSession, status: "recording" });
+    if (result?.ok) {
+      if (pausedAt) totalPausedMs += Date.now() - pausedAt;
+      pausedAt = 0;
+      renderSession(result.session || { ...activeSession, status: "recording" });
+    }
   });
 });
 
@@ -183,8 +206,6 @@ function stop() {
     clearInterval(ticker);
     if (!result?.ok) {
       alert(result?.error || "Recording could not stop.");
-
-
 
       chrome.runtime.sendMessage({ type: "GET_STATE" }, (state) => {
         if (chrome.runtime.lastError || !state?.session) {
@@ -211,12 +232,8 @@ $("discardRecording")?.addEventListener("click", () => {
   clearInterval(ticker);
   chrome.runtime.sendMessage({ type: "DISCARD_RECORDING" }, (result) => {
 
-
-
-
     if (chrome.runtime.lastError || !result?.ok) {
       alert(result?.error || chrome.runtime.lastError?.message || "Could not discard the recording. Please try again.");
-
 
       return;
     }
@@ -235,19 +252,14 @@ $("openDashboard").addEventListener("click", openDashboard);
 $("export").addEventListener("click", () => {
   if (!finishedTutorial) return;
 
-
-
-
   const json = JSON.stringify(finishedTutorial, null, 2);
   const blob = new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
-
 
   const rawName = (finishedTutorial.title || "tutorial").replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^[-_]+|[-_]+$/g, "").slice(0, 100).toLowerCase() || "tutorial";
   const filename = `${rawName || "tutorial"}.json`;
   if (chrome.downloads?.download) {
     chrome.downloads.download({ url, filename }, () => {
-
 
       if (chrome.runtime.lastError) {
         alert(chrome.runtime.lastError.message || "Download failed.");
@@ -271,10 +283,10 @@ $("discard").addEventListener("click", () => {
   });
 });
 
-function renderExcludedList() {
+async function renderExcludedList() {
   const list = $("excludedList");
   if (!list) return;
-  const domains = readExcludedDomains();
+  const domains = await readExcludedDomains();
   list.innerHTML = domains.length
     ? domains.map((d, i) => `
         <span class="excluded-chip">
@@ -283,9 +295,9 @@ function renderExcludedList() {
         </span>`).join("")
     : `<span class="excluded-empty">No exclusions yet.</span>`;
   list.querySelectorAll(".excluded-remove").forEach((btn) => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       const idx = Number(btn.dataset.i);
-      const arr = readExcludedDomains();
+      const arr = await readExcludedDomains();
       arr.splice(idx, 1);
       try { localStorage.setItem("btr-excluded-domains", JSON.stringify(arr)); } catch (e) {}
       syncExcludedDomainsToStorage(arr);
@@ -294,9 +306,8 @@ function renderExcludedList() {
   });
 }
 
-$("excludedAdd")?.addEventListener("click", () => {
+$("excludedAdd")?.addEventListener("click", async () => {
   const input = $("excludedInput");
-
 
   const value = (input.value || "").trim().toLowerCase()
     .replace(/^https?:\/\//, "")
@@ -308,9 +319,8 @@ $("excludedAdd")?.addEventListener("click", () => {
     setTimeout(() => { input.style.borderColor = ""; }, 1500);
     return;
   }
-  const arr = readExcludedDomains();
+  const arr = await readExcludedDomains();
   if (!arr.includes(value)) arr.push(value);
-  try { localStorage.setItem("btr-excluded-domains", JSON.stringify(arr)); } catch (e) {}
   syncExcludedDomainsToStorage(arr);
   input.value = "";
   renderExcludedList();
@@ -328,13 +338,11 @@ $("settings").addEventListener("click", () => {
   window.close();
 });
 
-function refreshState() {
+async function refreshState() {
   renderExcludedList();
-
-
-  syncExcludedDomainsToStorage(readExcludedDomains());
+  const domains = await readExcludedDomains();
+  syncExcludedDomainsToStorage(domains);
   chrome.runtime.sendMessage({ type: "GET_STATE" }, (result) => {
-
 
     if (chrome.runtime.lastError) {
       activeSession = null;

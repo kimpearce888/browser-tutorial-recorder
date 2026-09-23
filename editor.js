@@ -25,14 +25,6 @@ let annotationPresets = [];
 async function saveTutorial() {
   if (!tutorial) return;
 
-
-
-
-
-
-
-
-
   const normalized = normalizeTutorial(tutorial);
   tutorial = normalized;
   await dbPut({ ...normalized, updatedAt: new Date().toISOString() });
@@ -50,11 +42,11 @@ function scheduleSave() {
   }, 250);
 }
 
-function flushPendingSave() {
+async function flushPendingSave() {
   if (saveTimer && tutorial) {
     clearTimeout(saveTimer);
     saveTimer = null;
-    try { saveTutorial(); } catch (_) {  }
+    try { await saveTutorial(); } catch (_) {}
   }
 }
 window.addEventListener("beforeunload", flushPendingSave);
@@ -130,10 +122,6 @@ function cloneWithoutScreenshots(source) {
 }
 
 function undo() {
-
-
-
-
 
   clearTimeout(arrowHistoryTimer);
   if (historyIndex <= 0) return;
@@ -246,13 +234,8 @@ function renderCanvas() {
   const size = canvasSize(step);
   $("canvasWrap").style.aspectRatio = `${size.width}/${size.height}`;
 
-
-
-
   const hasImage = !!step.screenshot?.image;
   $("screenshot").classList.toggle("hidden", !hasImage);
-
-
 
   if (hasImage) {
     $("screenshot").src = sanitizeImageUrl(step.screenshot.image);
@@ -262,8 +245,6 @@ function renderCanvas() {
   $("canvasMeta").textContent = `${size.width} × ${size.height} · ${step.screenshot?.url || "Captured page"}`;
   $("actionBadge").textContent = step.action || "ACTION";
   $("annotationCount").textContent = String(step.annotations.length);
-
-
 
   const canvasRect = $("canvasWrap").getBoundingClientRect();
   const cachedScale = canvasRect.width / size.width || 1;
@@ -299,10 +280,8 @@ function renderAnnotationNode(a, index, size, cachedScale) {
 
   if (a.type === "arrow") {
 
-
     const num = (v, fallback = 0) => { const n = Number(v); return Number.isFinite(n) ? n : fallback; };
     const pct = (v, fallback = 0) => { const n = Number(v); if (!Number.isFinite(n)) return fallback; return Math.max(0, Math.min(100, n)); };
-
 
     node.innerHTML = `<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
       <line x1="${pct(a.startX, 8)}" y1="${pct(a.startY, 92)}" x2="${pct(a.endX, 92)}" y2="${pct(a.endY, 8)}"
@@ -493,10 +472,6 @@ function pointerToCanvas(event) {
 function trackPointer(onMove, onUp) {
   const moveListener = (event) => onMove(event);
 
-
-
-
-
   let settled = false;
   const upListener = () => {
     if (settled) return;
@@ -558,7 +533,6 @@ function startResize(event, index, handle) {
     let width = Math.max(min, Math.abs(right - left));
     let height = Math.max(min, Math.abs(bottom - top));
 
-
     if (moveEvent.shiftKey && handle.length === 2) {
       const ratio = original.width / Math.max(1, original.height);
       if (width / height > ratio) height = width / ratio;
@@ -600,8 +574,6 @@ function startRotate(event, index) {
     const point = pointerToCanvas(moveEvent);
     let angle = original + (Math.atan2(point.y - center.y, point.x - center.x) - startAngle) * 180 / Math.PI;
     if (moveEvent.shiftKey) angle = Math.round(angle / 15) * 15;
-
-
 
     a.rotation = ((angle % 360) + 360) % 360;
     renderCanvas();
@@ -660,7 +632,7 @@ function createAnnotation(type, start, end) {
     a.height = 28;
     a.x = clamp(end.x, 14, size.width - 14);
     a.y = clamp(end.y, 14, size.height - 14);
-    a.label = String(nextMarkerNumber());
+    a.label = String(nextMarkerNumber()).slice(0, 3);
   }
 
   if (type === "arrow") {
@@ -704,8 +676,6 @@ function startDrawing(event) {
       layer.style.setProperty("--draw-h", `${Math.abs(point.y - drawing.start.y)}px`);
     };
 
-
-
     let settled = false;
     const onUp = (upEvent) => {
       if (settled) return;
@@ -725,7 +695,6 @@ function startDrawing(event) {
         height: Math.abs(end.y - current.start.y)
       };
       if (rect.width < 8 || rect.height < 8) {
-
 
         cropMode = false;
         $("canvasWrap").classList.remove("crop-mode");
@@ -752,7 +721,6 @@ function startDrawing(event) {
     layer.style.setProperty("--draw-w", `${Math.abs(point.x - drawing.start.x)}px`);
     layer.style.setProperty("--draw-h", `${Math.abs(point.y - drawing.start.y)}px`);
   };
-
 
   let settled = false;
   const onUp = (upEvent) => {
@@ -836,11 +804,7 @@ function bindField(id, update) {
   });
   field.addEventListener("change", () => {
 
-
-
-
-
-    if (field._editedAnnotation != null && tutorial.steps[selectedStep]?.annotations[field._editedAnnotation]) pushHistory();
+    if (tutorial.steps[selectedStep]?.annotations[selectedAnnotation] != null) pushHistory();
   });
 
   field.addEventListener("focus", () => { field._editedAnnotation = selectedAnnotation; });
@@ -880,7 +844,6 @@ function duplicateStep() {
   if (!step) return;
   commit((t) => {
 
-
     const copy = { ...step, screenshot: { ...step.screenshot } };
     copy.id = `step-${crypto.randomUUID()}`;
     copy.annotations = (step.annotations || []).map((a) => {
@@ -908,15 +871,10 @@ function setupEvents() {
     }
     if (event.target === $("canvasWrap") || event.target === $("screenshot") || event.target === $("annotationLayer")) {
 
-
-
-
-
       selectedAnnotation = null;
       render();
     }
   });
-
 
   document.querySelectorAll("[data-tool]").forEach((button) => {
     button.onclick = (event) => {
@@ -928,14 +886,6 @@ function setupEvents() {
       updateToolButtons();
     };
   });
-
-
-
-
-
-
-
-
 
   bindField("annX", (a, v) => {
     const size = canvasSize(tutorial?.steps?.[selectedStep]);
@@ -983,7 +933,6 @@ function setupEvents() {
     deleteAnnotation();
   });
 
-
   $("titleInput").addEventListener("input", (event) => {
     if (!tutorial) return;
     tutorial.title = event.target.value;
@@ -994,7 +943,6 @@ function setupEvents() {
   });
   $("titleInput").addEventListener("change", pushHistory);
 
-
   $("descriptionInput").addEventListener("input", (event) => {
     const step = tutorial?.steps[selectedStep];
     if (!step) return;
@@ -1004,7 +952,6 @@ function setupEvents() {
   });
   $("descriptionInput").addEventListener("change", pushHistory);
 
-
   $("tutorialDescription")?.addEventListener("input", (event) => {
     if (!tutorial) return;
     tutorial.description = event.target.value;
@@ -1012,7 +959,6 @@ function setupEvents() {
     scheduleSave();
   });
   $("tutorialDescription")?.addEventListener("change", pushHistory);
-
 
   $("addStep").addEventListener("click", (event) => {
     event.preventDefault();
@@ -1025,23 +971,16 @@ function setupEvents() {
     deleteStep();
   });
 
-
-
-
-
-
   $("toggleMarkers").addEventListener("click", () => {
     markersVisible = !markersVisible;
     renderCanvas();
   });
-
 
   $("fit").addEventListener("click", () => {
     const wrap = $("canvasWrap");
     wrap.classList.toggle("fit-to-viewport");
     renderCanvas();
   });
-
 
   const propsToggle = document.querySelector(".properties-toggle");
   if (propsToggle) {
@@ -1050,18 +989,14 @@ function setupEvents() {
     });
   }
 
-
   $("undo").addEventListener("click", undo);
   $("redo").addEventListener("click", redo);
-
-
 
   $("preview").addEventListener("click", async () => {
     await saveTutorial();
     const popup = window.open(`preview.html?id=${encodeURIComponent(tutorial.id)}`, "_blank");
     if (!popup) alert("Allow popups to open preview.");
   });
-
 
   $("toggleStatus")?.addEventListener("click", () => {
     if (!tutorial) return;
@@ -1070,13 +1005,11 @@ function setupEvents() {
     });
   });
 
-
   $("backToDashboard").addEventListener("click", async (event) => {
     event.preventDefault();
     await saveTutorial();
     location.href = "dashboard.html";
   });
-
 
   $("exportMenu").onclick = () => $("exportDialog").showModal();
 
@@ -1091,7 +1024,6 @@ function setupEvents() {
       button.innerHTML = "<span>Exporting…</span>";
       try {
 
-
         await saveTutorial();
         await exportTutorial(tutorial, button.dataset.export, selectedStep);
         $("exportDialog").close();
@@ -1104,8 +1036,6 @@ function setupEvents() {
       }
     };
   });
-
-
 
   $("cropStep")?.addEventListener("click", (event) => {
     event.preventDefault();
@@ -1133,7 +1063,6 @@ function setupEvents() {
     savePreset();
   });
 
-
   $("import").addEventListener("click", () => $("importInput").click());
   $("importInput").onchange = (event) => {
     const file = event.target.files[0];
@@ -1142,15 +1071,9 @@ function setupEvents() {
     reader.onload = async () => {
       try {
 
-
-
         const parsed = JSON.parse(reader.result);
         const list = Array.isArray(parsed) ? parsed : [parsed];
         if (list.length === 0) { alert("No tutorials found in the file."); return; }
-
-
-
-
 
         let loadedFirst = false;
         let imported = 0;
@@ -1193,18 +1116,16 @@ function setupEvents() {
     event.target.value = "";
   };
 
-
   document.addEventListener("keydown", (event) => {
     if (!tutorial) return;
 
-
-
-
-    if (document.querySelector("dialog[open]") || $("shortcutOverlay")) return;
+    if ($("shortcutOverlay")) {
+      if (event.key === "Escape") { $("shortcutOverlay").remove(); event.preventDefault(); }
+      return;
+    }
+    if (document.querySelector("dialog[open]")) return;
     const tag = document.activeElement?.tagName;
     const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(tag);
-
-
 
     if (matchesShortcut(event, "save")) {
       event.preventDefault();
@@ -1225,20 +1146,15 @@ function setupEvents() {
       return;
     }
 
-
     if (!typing) {
-
 
       const isRedo = matchesShortcut(event, "redo") ||
         ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "y");
       if (isRedo) { event.preventDefault(); redo(); return; }
       if (matchesShortcut(event, "undo")) { event.preventDefault(); undo(); return; }
     }
-    if (matchesShortcut(event, "backToDashboard")) { event.preventDefault(); $("backToDashboard").click(); return; }
-
-
-
     if (typing) return;
+    if (matchesShortcut(event, "backToDashboard")) { event.preventDefault(); $("backToDashboard").click(); return; }
 
     if (matchesShortcut(event, "preview")) { event.preventDefault(); $("preview").click(); return; }
     if (matchesShortcut(event, "exportMenu")) { event.preventDefault(); $("exportMenu").click(); return; }
@@ -1270,7 +1186,6 @@ function setupEvents() {
       if (selectedStep > 0) { selectedStep--; selectedAnnotation = null; render(); }
       return;
     }
-
 
     for (let i = 1; i <= 9; i++) {
       if (matchesShortcut(event, `tool${i}`)) {
@@ -1309,8 +1224,6 @@ function setupEvents() {
         a.y = clamp(a.y, 0, Math.max(0, size.height - a.height));
       }
 
-
-
       clearTimeout(arrowHistoryTimer);
       arrowHistoryTimer = setTimeout(() => { pushHistory(); }, 400);
       scheduleSave();
@@ -1323,7 +1236,6 @@ function loadPresets() {
   try {
     const raw = localStorage.getItem("btr-annotation-presets");
     const parsed = raw ? JSON.parse(raw) : [];
-
 
     annotationPresets = Array.isArray(parsed) ? parsed : [];
   } catch (e) {
@@ -1384,8 +1296,6 @@ function applyPreset(idx) {
   const preset = annotationPresets[idx];
   if (!preset) return;
 
-
-
   const stepForPreset = tutorial?.steps?.[selectedStep];
   const presetSize = canvasSize(stepForPreset);
   const validated = normalizeAnnotation(preset.data || {}, 0, presetSize.width, presetSize.height);
@@ -1420,11 +1330,11 @@ function startCropMode() {
 async function applyCrop(rect) {
   cropMode = false;
   $("canvasWrap").classList.remove("crop-mode");
-  const step = tutorial.steps[selectedStep];
+  const cropStepIndex = selectedStep;
+  const step = tutorial.steps[cropStepIndex];
   if (!step?.screenshot?.image || !rect) { render(); return; }
   try {
     const image = await loadImage(step.screenshot.image);
-
     const sw = step.screenshot.width || image.naturalWidth || 1280;
     const sh = step.screenshot.height || image.naturalHeight || 720;
     const canvas = document.createElement("canvas");
@@ -1436,7 +1346,7 @@ async function applyCrop(rect) {
     canvas.height = Math.max(8, Math.round(cropH));
     canvas.getContext("2d").drawImage(image, sx, sy, cropW, cropH, 0, 0, canvas.width, canvas.height);
     commit((t) => {
-      const s = t.steps[selectedStep];
+      const s = t.steps[cropStepIndex];
       s.screenshot.image = canvas.toDataURL("image/png");
       s.screenshot.width = canvas.width;
       s.screenshot.height = canvas.height;
@@ -1444,16 +1354,12 @@ async function applyCrop(rect) {
       s.annotations = s.annotations.filter((a) => {
         const box = annotationBox(a);
 
-
-
-
         return box.x < rect.x + rect.width &&
                box.x + box.width > rect.x &&
                box.y < rect.y + rect.height &&
                box.y + box.height > rect.y;
       }).map((a) => {
         const box = annotationBox(a);
-
 
         const clampedX = Math.max(rect.x, box.x);
         const clampedY = Math.max(rect.y, box.y);
@@ -1463,19 +1369,11 @@ async function applyCrop(rect) {
         const ny = clampedY - rect.y;
         if (a.type === "marker") {
 
-
-
-
           const newCenterX = a.x - rect.x;
           const newCenterY = a.y - rect.y;
           a.x = Math.max(a.width / 2, Math.min(newCenterX, rect.width - a.width / 2));
           a.y = Math.max(a.height / 2, Math.min(newCenterY, rect.height - a.height / 2));
         } else if (a.type === "arrow") {
-
-
-
-
-
 
           const oldBox = annotationBox(a);
           const startAbsX = oldBox.x + (a.startX / 100) * oldBox.width;
@@ -1513,7 +1411,6 @@ function pickTab(tabs) {
     const existing = document.getElementById("tabPickerDialog");
     if (existing) existing.remove();
 
-
     const previouslyFocused = document.activeElement;
 
     const dialog = document.createElement("dialog");
@@ -1546,7 +1443,6 @@ function pickTab(tabs) {
     };
     closeBtn.onclick = close;
     dialog.addEventListener("cancel", (e) => { e.preventDefault(); close(); });
-
 
     dialog.addEventListener("keydown", (e) => {
       if (e.key !== "Tab") return;
@@ -1603,14 +1499,11 @@ async function captureFullPage() {
 
     const tabs = await chrome.tabs.query({});
 
-
     const capturable = tabs.filter((t) => t.url && !/^(chrome|edge|about|devtools|chrome-extension|chrome-untrusted|file|moz-extension|extension):/i.test(t.url));
     if (!capturable.length) {
       alert("No capturable tabs found. Open a webpage first, then try again.");
       return;
     }
-
-
 
     const targetTab = await pickTab(capturable);
     if (!targetTab) return;
@@ -1621,33 +1514,16 @@ async function captureFullPage() {
       return;
     }
 
-
     if (response.captureError) {
       alert(response.captureError);
       return;
     }
-
-
 
     if (response.truncated) {
       if (!confirm("This page is too long to capture in full. The capture will contain only the first ~100,000 pixels of the page. Continue?")) {
         return;
       }
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     const widths = [];
     let viewportHeight = response.captures[0]?.viewportHeight || 0;
@@ -1656,23 +1532,6 @@ async function captureFullPage() {
     widths.push(firstImg.naturalWidth);
     if (!viewportHeight) viewportHeight = firstImg.naturalHeight;
     const width = firstImg.naturalWidth;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     const firstH = firstImg.naturalHeight;
     const sourceRects = response.captures.map((cap, i) => {
@@ -1685,9 +1544,6 @@ async function captureFullPage() {
       return { sourceY: Math.min(overlap, firstH), sourceH };
     });
     const totalHeight = sourceRects.reduce((sum, r) => sum + r.sourceH, 0);
-
-
-
 
     const MAX_CANVAS_HEIGHT = 32767;
     const MAX_CANVAS_AREA = 268435456;
@@ -1706,9 +1562,6 @@ async function captureFullPage() {
     const drawScale = finalWidth / width;
     let y = 0;
 
-
-
-
     for (let i = 0; i < response.captures.length; i++) {
       const { sourceY, sourceH } = sourceRects[i];
       if (sourceH <= 0) continue;
@@ -1719,29 +1572,6 @@ async function captureFullPage() {
       y += drawH;
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     const nestedEntries = Array.isArray(response.nestedCaptures) ? response.nestedCaptures : [];
     if (nestedEntries.length > 0) {
 
@@ -1749,9 +1579,6 @@ async function captureFullPage() {
       for (const entry of nestedEntries) {
         if (!entry?.captures?.length || !entry?.rect) continue;
         try {
-
-
-
 
           const firstNestedImg = await loadImage(entry.captures[0].image);
           const scrollerRect = entry.rect;
@@ -1763,7 +1590,6 @@ async function captureFullPage() {
           const cropY = Math.round(scrollerRect.y * ratioY);
           const cropW = Math.max(1, Math.round(scrollerRect.width * ratioX));
           const cropH = Math.max(1, Math.round(scrollerRect.height * ratioY));
-
 
           const nestedSourceRects = entry.captures.map((cap, i) => {
             if (i === 0) return { sourceY: 0, sourceH: cropH };
@@ -1791,7 +1617,6 @@ async function captureFullPage() {
             ny += sourceH;
           }
 
-
           const nestedDataUrl = nestedCanvas.toDataURL("image/png");
           const nestedImg = await loadImage(nestedDataUrl);
           nestedStitchedPanels.push({
@@ -1801,22 +1626,13 @@ async function captureFullPage() {
         } catch (_) {  }
       }
 
-
-
       if (nestedStitchedPanels.length > 0) {
-
 
         const GAP_PX = 24;
         const LABEL_PX = 28;
         const additionalHeight = nestedStitchedPanels.reduce((sum, p) => sum + p.img.naturalHeight + GAP_PX + LABEL_PX, 0);
         let newHeight = canvas.height + additionalHeight;
         let newWidth = canvas.width;
-
-
-
-
-
-
 
         const MAX_CANVAS_HEIGHT = 32767;
         const MAX_CANVAS_AREA = 268435456;
@@ -1825,7 +1641,6 @@ async function captureFullPage() {
           newWidth = Math.round(newWidth * scale);
           newHeight = Math.round(newHeight * scale);
         }
-
 
         const newCanvas = document.createElement("canvas");
         newCanvas.width = newWidth;
@@ -1847,14 +1662,9 @@ async function captureFullPage() {
 
           ny += Math.round(GAP_PX / 2 * widthScale);
 
-
-
-
-
           const panelDrawW = panel.img.naturalWidth * widthScale;
           const panelDrawH = panel.img.naturalHeight * widthScale;
           const panelX = Math.round((newCanvas.width - panelDrawW) / 2);
-
 
           newCtx.fillStyle = "#f0f2f5";
           newCtx.fillRect(0, ny, newCanvas.width, panelDrawH);
@@ -1897,18 +1707,14 @@ function mergeWithNextStep(index) {
     const current = t.steps[index];
     const next = t.steps[index + 1];
 
-
     const sep = current.description && next.description ? "\n\n— Next step —\n\n" : "";
     current.description = `${current.description || ""}${sep}${next.description || ""}`.trim();
-
 
     const currentSize = canvasSize(current);
     const nextSize = canvasSize(next);
     const scaleX = currentSize.width / Math.max(1, nextSize.width);
     const scaleY = currentSize.height / Math.max(1, nextSize.height);
     const scaledAnnotations = next.annotations.map((a) => {
-
-
 
       const c = { ...a };
       c.id = `annotation-${crypto.randomUUID()}`;
@@ -1930,17 +1736,12 @@ function splitStep(index) {
   if (!step) return;
   commit((t) => {
 
-
-
-
-
     const copy = {
       ...step,
       screenshot: { ...step.screenshot },
       annotations: []
     };
     copy.id = `step-${crypto.randomUUID()}`;
-
 
     copy.description = `${step.description || ""} (continued)`.trim();
     t.steps.splice(index + 1, 0, copy);
@@ -1992,10 +1793,9 @@ function nextMarkerNumber() {
   const numbers = step.annotations
     .filter((a) => a.type === "marker")
 
-
     .map((a) => Number(a.label))
     .filter((n) => Number.isFinite(n) && n > 0);
-  return numbers.length ? Math.max(...numbers) + 1 : 1;
+  return numbers.length ? numbers.reduce((m, n) => n > m ? n : m, 0) + 1 : 1;
 }
 
 async function showShortcutCheatSheet() {
@@ -2004,7 +1804,6 @@ async function showShortcutCheatSheet() {
   const overlay = document.createElement("div");
   overlay.id = "shortcutOverlay";
   overlay.className = "shortcut-overlay";
-
 
   const userSettings = await getSettings();
   const userShortcuts = (userSettings || {}).shortcuts || {};
@@ -2038,7 +1837,6 @@ async function init() {
   if (hint) hint.innerHTML = `<kbd>${modKey}</kbd> <kbd>Z</kbd> undo · <kbd>${modKey}</kbd> <kbd>S</kbd> save`;
   const id = new URLSearchParams(location.search).get("id");
 
-
   let source = id ? await dbGet(id) : null;
   if (!source) {
     if (id) {
@@ -2051,27 +1849,11 @@ async function init() {
   }
   tutorial = normalizeTutorial(source);
 
-
-
-
-
-
-
-
-
-
-
-
-
   const needsMigration = (() => {
     if (source.version !== 4) return true;
     if (!Array.isArray(source.steps)) return true;
 
-
     if (!source.steps.every(s => s && s.id && s.number != null && s.screenshot && typeof s.screenshot.width === "number")) return true;
-
-
-
 
     const stripImages = (t) => ({
       ...t,
@@ -2081,7 +1863,7 @@ async function init() {
   })();
   if (needsMigration) {
 
-    await dbPut({ ...tutorial, updatedAt: source.updatedAt || tutorial.updatedAt });
+    await dbPut({ ...tutorial, updatedAt: source.updatedAt || tutorial.updatedAt || new Date().toISOString() });
   }
   pushHistory();
   render();

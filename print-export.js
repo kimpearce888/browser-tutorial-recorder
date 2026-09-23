@@ -12,19 +12,11 @@ function showError(message) {
 async function render() {
   try {
 
-
-
-
-
-
     const id = new URLSearchParams(location.search).get("id");
     if (!id) {
       showError("No tutorial specified. Open this page from the editor's Export menu.");
       return;
     }
-
-
-
 
     const raw = await dbGet(id);
     const tutorial = raw ? normalizeTutorial(raw) : null;
@@ -63,8 +55,6 @@ async function render() {
     }
     document.getElementById("content").innerHTML = html.join("\n");
 
-
-
     const imgs = [...document.querySelectorAll("#content img")];
     await Promise.all(imgs.map((img) => {
       if (img.complete && img.naturalWidth) return Promise.resolve();
@@ -76,11 +66,7 @@ async function render() {
 
     await new Promise((r) => setTimeout(r, 100));
 
-
-
     const printBar = document.createElement("div");
-
-
 
     printBar.className = "print-bar";
     printBar.style.cssText = "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;background:#1b2333;color:#fff;border-radius:12px;padding:14px 24px;display:flex;gap:16px;align-items:center;box-shadow:0 8px 32px rgba(0,0,0,.3);font:14px system-ui";
@@ -94,7 +80,6 @@ async function render() {
       printBar.remove();
       window.print();
     });
-
 
   } catch (error) {
     showError(error?.message || String(error));

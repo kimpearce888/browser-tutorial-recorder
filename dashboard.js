@@ -29,8 +29,6 @@ function formatDate(value) {
 
 function totalAnnotations(tutorial) {
 
-
-
   const steps = Array.isArray(tutorial.steps) ? tutorial.steps : [];
   return steps.reduce((sum, step) => sum + (step.annotationCount ?? (step.annotations?.length || 0)), 0);
 }
@@ -63,7 +61,6 @@ function visibleTutorials() {
   list = list.slice().sort((a, b) => {
     if (sort === "title") return (a.title || "").localeCompare(b.title || "");
 
-
     if (sort === "steps") return (Array.isArray(b.steps) ? b.steps.length : 0) - (Array.isArray(a.steps) ? a.steps.length : 0);
     if (sort === "created") return new Date(b.createdAt) - new Date(a.createdAt);
     return new Date(b.updatedAt) - new Date(a.updatedAt);
@@ -74,7 +71,6 @@ function visibleTutorials() {
 
 function renderStats() {
   const total = tutorials.length;
-
 
   const steps = tutorials.reduce((sum, t) => sum + (Array.isArray(t.steps) ? t.steps.length : 0), 0);
   const annotations = tutorials.reduce((sum, t) => sum + totalAnnotations(t), 0);
@@ -261,10 +257,6 @@ async function exportSingle(format) {
   closeExportMenu();
   if (!tutorialId) return;
 
-
-
-
-
   let tutorial = null;
   try {
     await new Promise((resolve) => {
@@ -296,10 +288,6 @@ function openBulkExportDialog() {
 
 async function bulkExport(format) {
 
-
-
-
-
   if (format === "pdf") {
     $("bulkExportDialog").close();
     alert("PDF export opens a print dialog — please export tutorials one at a time for PDF.");
@@ -308,9 +296,6 @@ async function bulkExport(format) {
   $("bulkExportDialog").close();
   const ids = [...selected];
   const kind = format;
-
-
-
 
   for (const id of ids) {
     let tutorial = null;
@@ -343,11 +328,6 @@ $("importInput").addEventListener("change", (event) => {
   reader.onload = async () => {
     try {
 
-
-
-
-
-
       const parsed = JSON.parse(reader.result);
       const list = Array.isArray(parsed) ? parsed : [parsed];
       let imported = 0;
@@ -377,23 +357,18 @@ $("importInput").addEventListener("change", (event) => {
   event.target.value = "";
 });
 
-function startNewRecording() {
-
-
-
-
+async function startNewRecording() {
 
   let excludedDomains = [];
   try {
-    const raw = localStorage.getItem("btr-excluded-domains");
-    if (raw) excludedDomains = JSON.parse(raw);
-    if (!Array.isArray(excludedDomains)) excludedDomains = [];
+    const result = await chrome.storage.local.get("btr-excluded-domains");
+    excludedDomains = Array.isArray(result?.["btr-excluded-domains"]) ? result["btr-excluded-domains"] : [];
+    if (excludedDomains.length === 0) {
+      const raw = localStorage.getItem("btr-excluded-domains");
+      if (raw) excludedDomains = JSON.parse(raw);
+      if (!Array.isArray(excludedDomains)) excludedDomains = [];
+    }
   } catch (e) { excludedDomains = []; }
-
-
-
-
-
 
   chrome.tabs.query({ active: true, currentWindow: true }, (currentTabs) => {
     const extensionUrlRe = /^(chrome-extension|chrome|edge|about|devtools|chrome-untrusted|moz-extension|file):/i;
@@ -413,10 +388,8 @@ function startNewRecording() {
       return;
     }
 
-
     chrome.windows.getCurrent((currentWin) => {
       const currentWindowId = currentWin?.id;
-
 
       const extensionUrlRe = /^(chrome-extension|chrome|edge|about|devtools|chrome-untrusted|moz-extension|file):/i;
       const eligible = tabs
@@ -436,8 +409,6 @@ function startNewRecording() {
       chrome.tabs.create({ url: "https://www.google.com/" }, (newTab) => {
         setTimeout(() => {
 
-
-
           send("START_RECORDING", { excludedDomains, tabId: newTab.id }, (result) => {
             if (chrome.runtime.lastError) return alert(chrome.runtime.lastError.message || "The recorder service is unavailable.");
             if (!result?.ok) return alert(result?.error || "Recording could not start.");
@@ -452,8 +423,6 @@ function startNewRecording() {
     chrome.tabs.update(tab.id, { active: true }, () => {
       if (tab.windowId) chrome.windows.update(tab.windowId, { focused: true }, () => {});
 
-
-
       send("START_RECORDING", { excludedDomains, tabId: tab.id }, (result) => {
         if (chrome.runtime.lastError) return alert(chrome.runtime.lastError.message || "The recorder service is unavailable.");
         if (!result?.ok) return alert(result?.error || "Recording could not start.");
@@ -466,13 +435,6 @@ function startNewRecording() {
 
 function load() {
 
-
-
-
-
-
-
-
   send("GET_TUTORIALS_SUMMARY", {}, (result) => {
 
     if (chrome.runtime.lastError) {
@@ -484,7 +446,6 @@ function load() {
       return;
     }
 
-
     if (!result) {
       $("grid").innerHTML = "";
       $("empty").classList.add("hidden");
@@ -494,7 +455,6 @@ function load() {
       return;
     }
     tutorials = result?.tutorials || [];
-
 
     const validIds = new Set(tutorials.map((t) => t.id));
     for (const id of [...selected]) {
@@ -548,7 +508,6 @@ $("clearFilters").addEventListener("click", () => {
   searchInput.value = "";
   statusFilter.value = "";
 
-
   sortBy.value = "updated";
   renderGrid();
 });
@@ -556,15 +515,13 @@ $("clearFilters").addEventListener("click", () => {
 document.addEventListener("click", (event) => {
   if (!activeExportId) return;
   const menu = $("exportMenu");
-  if (!menu.contains(event.target) && !event.target.dataset.action) closeExportMenu();
+  if (!menu.contains(event.target) && !event.target.closest?.("[data-action]")) closeExportMenu();
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeExportMenu();
     $("bulkExportDialog").close();
   }
-
-
 
   const tag = document.activeElement?.tagName;
   if ((event.metaKey || event.ctrlKey) && event.key === "a" && !["INPUT", "TEXTAREA", "SELECT"].includes(tag) && !document.querySelector("dialog[open]")) {

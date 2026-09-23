@@ -25,7 +25,7 @@ Refs #<issue number>
 - [ ] No new `console.log` left in production code
 - [ ] README / CHANGES.md updated if user-facing change
 - [ ] No secrets, API keys, or PII committed
-- [ ] Manifest version bumped if shipping a release (current: `1.0.0`)
+- [ ] Manifest version bumped if shipping a release (current: `1.0.3`)
 
 ## Screenshots / screen recordings
 If the change is visual, attach before/after screenshots or a short screen recording.

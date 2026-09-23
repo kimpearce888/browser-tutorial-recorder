@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.0.3 — 2026-09-24
+
+### Fixed — recording & editor reliability
+
+- Recording not starting: resolved `sendResponse` / `return true` conflict in the background message listener (async responses were cut off).
+- Recording not starting: corrected window targeting (`lastFocusedWindow` vs `currentWindow`) when attaching the content script.
+- SPA navigation capture (`history.pushState`) now records correctly.
+- Editor drag & drop step reordering works reliably.
+- Excluded-domain changes now apply mid-recording.
+- Elapsed-time display in the recording badge no longer drifts.
+- Fixed tutorial ID collisions on rapid re-recording.
+- Exhaustive audit: 8 additional bugs and 12 code smells fixed.
+- Codebase simplified: removed redundant logic left over from earlier audit rounds.
+
+**Tests: 173/173 pass.**
+
 ## v1.0.2 — 2026-09-23
 
 ### Code hygiene

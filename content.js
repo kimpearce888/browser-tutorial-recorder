@@ -10,7 +10,6 @@
   let lastEventKey = "";
   let lastEventAt = 0;
 
-
   let dragSource = null;
 
   const focusValues = new WeakMap();
@@ -21,79 +20,18 @@
 
   let maskedInputs = null;
 
-
-
-
-
-
   let sensitivePatterns = "password|passcode|secret|token|api.?key|authorization|credit.?card|card.?number|cvv|csc|cc-|security.?code|otp|one.?time";
 
   let autoPauseIdle = 0;
   let lastActivity = Date.now();
   let idleTimer = null;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
   const frameNonce = isTopFrame ? null
     : (crypto?.randomUUID?.() || `btr-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
-
-
-
-
-
-
   const iframeRegistry = new Map();
 
-
-
   let cumulativeTransform = { offsetX: 0, offsetY: 0, scale: 1 };
-
-
-
-
 
   const cssEscape = (value) => {
     try { return CSS.escape(value); }
@@ -104,11 +42,6 @@
     const host = location.hostname.toLowerCase();
     return excludedDomains.some((d) => host === d || host.endsWith(`.${d}`));
   };
-
-
-
-
-
 
   const elementText = (el) => {
     if (!el) return "";
@@ -128,18 +61,12 @@
 
   function isSensitive(element) {
 
-
-
     const input = element?.closest?.("input, textarea, select, [contenteditable]:not([contenteditable='false'])");
     if (!input) return false;
     if (input.type === "password") return true;
 
     const patterns = String(sensitivePatterns || "").trim();
     if (!patterns) return false;
-
-
-
-
 
     const doc = input.ownerDocument || document;
     let labelText = "";
@@ -160,7 +87,6 @@
     }
     return re.test(hay);
   }
-
 
   function selectors(element) {
     if (!element || element.nodeType !== 1) return [];
@@ -185,7 +111,6 @@
     const role = element.getAttribute("role");
     if (role) list.push(`[role="${cssEscape(role)}"]`);
 
-
     let node = element;
     const parts = [];
     for (let i = 0; node && node.nodeType === 1 && i < 5; i++, node = node.parentElement) {
@@ -203,8 +128,6 @@
 
     if (element.tagName === "BUTTON" || element.tagName === "A") {
       const label = elementText(element).slice(0, 60);
-
-
 
       if (label && element.hasAttribute("aria-label")) {
         list.push(`${element.tagName.toLowerCase()}[aria-label="${cssEscape(label)}"]`);
@@ -233,14 +156,12 @@
 
   function describe(kind, element, extra = {}) {
 
-
     let label;
     if (element?.tagName === "SELECT") {
       label = element.getAttribute?.("aria-label") || element.getAttribute?.("title") || element.name || "";
     } else {
       label = elementText(element) || element?.getAttribute?.("aria-label") || element?.getAttribute?.("placeholder") || element?.getAttribute?.("title");
     }
-
 
     const fallback = (() => {
       const tag = element?.tagName?.toLowerCase() || "element";
@@ -269,10 +190,6 @@
     return `${kind === "NAVIGATION" ? "Open" : "Click"} ${label || fallback}.`;
   }
 
-
-
-
-
   function createStatusOverlay() {
     if (!isTopFrame || overlayHost) return;
     overlayHost = document.createElement("div");
@@ -297,7 +214,6 @@
     if (node) node.textContent = `${count || 0} steps`;
   }
 
-
   function updateOverlayToPaused() {
     if (!overlayRoot) return;
     const bar = overlayRoot.querySelector(".bar");
@@ -312,9 +228,6 @@
     const label = bar.querySelector("span:nth-child(2)");
     if (label) label.textContent = "Paused";
   }
-
-
-
 
   function updateOverlayToRecording() {
     if (!overlayRoot) return;
@@ -337,37 +250,14 @@
     overlayRoot = null;
   }
 
-
-
-
-
   function showCaptureOverlay(payload) {
-
-
-
-
 
     const isMaskOnly = payload?.maskOnly === true;
     if (!isMaskOnly) {
       clearCapture();
     }
 
-
-
-
-
-
-
-
-
-
-
     if (isMaskOnly) {
-
-
-
-
-
 
       if (maskedInputs) return;
     }
@@ -406,31 +296,9 @@
       document.documentElement.appendChild(captureHost);
     }
 
-
-
-
-
-
-
-
     maskedInputs = [];
 
-
-
-
-
-
-
-
-
-
-
-
     const toMask = new Set();
-
-
-
-
 
     const FIELD_SELECTOR = "input:not([type='hidden']):not([type='checkbox']):not([type='radio']):not([type='file']):not([type='button']):not([type='submit']):not([type='image']):not([type='reset']), textarea, select, [contenteditable]:not([contenteditable='false']), input[type='password']";
 
@@ -439,10 +307,6 @@
       try {
         const fields = root.querySelectorAll(FIELD_SELECTOR);
         for (const el of fields) {
-
-
-
-
 
           const ac = (el.getAttribute && el.getAttribute("autocomplete") || "").toLowerCase();
           const acSensitive = ac && /^(cc-|current-password|new-password|one-time-code)/.test(ac);
@@ -466,20 +330,6 @@
     };
     collectFields(document);
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     toMask.forEach((el) => {
       const rect = el.getBoundingClientRect();
       const doc = el.ownerDocument || document;
@@ -492,15 +342,8 @@
     });
   }
 
-
-
-
   function refreshMasks() {
     if (!maskedInputs) return;
-
-
-
-
 
     const FIELD_SELECTOR = "input:not([type='hidden']):not([type='checkbox']):not([type='radio']):not([type='file']):not([type='button']):not([type='submit']):not([type='image']):not([type='reset']), textarea, select, [contenteditable]:not([contenteditable='false']), input[type='password']";
     const collectFields = (root) => {
@@ -537,7 +380,6 @@
     };
     collectFields(document);
 
-
     for (const { overlay, element } of maskedInputs) {
       if (!overlay || !element) continue;
       if (!element.isConnected) {
@@ -570,33 +412,13 @@
     }
   }
 
-
-
-
-
-
-
-
   const CLICK_EVENTS = new Set([
     "CLICK", "DOUBLE_CLICK", "RIGHT_CLICK", "MIDDLE_CLICK",
     "CHECKBOX", "RADIO", "SELECT", "SUBMIT", "DROP"
   ]);
 
-
-
-
-
-
   function send(kind, element, event, extra = {}) {
     if (!active || paused || domainBlocked() || !element || isSensitive(element)) return Promise.resolve({ ok: false });
-
-
-
-
-
-
-
-
 
     const isClick = CLICK_EVENTS.has(kind);
     const point = isClick && event && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
@@ -605,15 +427,6 @@
 
     const target = targetOf(element, point);
     const cursorPoint = point || (target.point ? { clientX: target.point.x, clientY: target.point.y } : null);
-
-
-
-
-
-
-
-
-
 
     const navUrl = kind === "NAVIGATION" || kind === "NEW_TAB" || kind === "NEW_WINDOW" ? (extra.navigationUrl || "") : "";
     const key = `${kind}:${target.selectors[0] || target.tag}:${Math.round(target.boundingBox.x)}:${Math.round(target.boundingBox.y)}:${navUrl}`;
@@ -629,11 +442,6 @@
       target,
       url: location.href,
 
-
-
-
-
-
       viewport: {
         width: topLevelViewport?.width || innerWidth,
         height: topLevelViewport?.height || innerHeight,
@@ -642,21 +450,9 @@
       frame: { id: 0, url: location.href, isTop: isTopFrame },
       cursor: cursorPoint ? { x: cursorPoint.clientX, y: cursorPoint.clientY, visible: true } : null,
 
-
-
-
-
       ...(kind === "CLICK" ? { doubleClickDescription: describe("DOUBLE_CLICK", element, extra) } : {}),
 
-
-
-
-
-
-
-
       ...(frameNonce ? { frameNonce } : {}),
-
 
       ...(!isTopFrame ? { frameTransform: cumulativeTransform } : {}),
       ...extra
@@ -677,22 +473,7 @@
     });
   }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
   const ACTIONABLE = "button,a,input,select,textarea,[role='button'],[role='option'],[contenteditable]:not([contenteditable='false']),[tabindex]";
-
-
 
   document.addEventListener("contextmenu", (event) => {
     const el = event.target?.closest?.("a,button,input,select,textarea,[role='button'],[role='link']");
@@ -705,41 +486,10 @@
     if (el) send("MIDDLE_CLICK", el, event);
   }, true);
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
   let suppressClickSubmitter = null;
   let suppressClickTimer = null;
 
   document.addEventListener("click", (event) => {
-
-
 
     if (suppressClickSubmitter && (event.target === suppressClickSubmitter || event.target?.closest?.(ACTIONABLE) === suppressClickSubmitter)) {
       return;
@@ -748,25 +498,7 @@
     if (!el) return;
     if (el.matches("input[type='checkbox']") || el.matches("input[type='radio']")) return;
 
-
-
-
-
-
     if (el.tagName === "SELECT") return;
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     if (event.detail === 2) {
       send("DOUBLE_CLICK", el, event);
@@ -775,16 +507,7 @@
 
     if (event.detail >= 3) return;
 
-
     send("CLICK", el, event);
-  }, true);
-
-  document.addEventListener("dblclick", (_event) => {
-
-
-
-
-
   }, true);
 
   document.addEventListener("change", (event) => {
@@ -802,12 +525,6 @@
     }
   }, true);
 
-
-
-
-
-
-
   const EDITABLE_SELECTOR = "input:not([type='password']),textarea,[contenteditable]:not([contenteditable='false'])";
   document.addEventListener("focus", (event) => {
     const el = event.target;
@@ -824,8 +541,6 @@
 
       if (newValue !== oldValue) {
 
-
-
         const lengthDelta = newValue.length - oldValue.length;
         send("TYPE", el, event, {
           inputLength: newValue.length,
@@ -838,30 +553,8 @@
     }
   }, true);
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
   let isReSubmitting = false;
   document.addEventListener("submit", (event) => {
-
 
     if (isReSubmitting) return;
 
@@ -871,51 +564,17 @@
     const el = submitter || form;
     if (isSensitive(el)) return;
 
-
-
-
-
-
-
-
     if (!active || paused || domainBlocked()) return;
-
-
-
-
-
-
-
-
-
-
-
-
 
     event.preventDefault();
     event.stopImmediatePropagation();
-
-
-
 
     suppressClickSubmitter = submitter || form;
     clearTimeout(suppressClickTimer);
     suppressClickTimer = setTimeout(() => { suppressClickSubmitter = null; }, 500);
 
-
-
-
-
-
-
-
-
-
-
     (async () => {
       try {
-
-
 
         await Promise.race([
           send("SUBMIT", el, event),
@@ -925,29 +584,19 @@
 
       } finally {
 
-
         isReSubmitting = true;
         try {
           if (typeof form.requestSubmit === "function") {
 
-
-
-
-
             form.requestSubmit(submitter || undefined);
           } else {
-
 
             form.submit();
           }
         } catch (_) {
 
-
           try { form.submit(); } catch (__) {  }
         } finally {
-
-
-
 
           setTimeout(() => { isReSubmitting = false; }, 0);
         }
@@ -960,9 +609,6 @@
     if (!keys.includes(event.key) && !(event.ctrlKey || event.metaKey)) return;
     const el = event.target?.closest?.(ACTIONABLE);
     if (el && !isSensitive(el)) {
-
-
-
 
       if (event.key === "Enter") {
         const isSubmitButton = el.tagName === "BUTTON" && (el.type === "submit" || el.type === "button");
@@ -977,10 +623,8 @@
   }, true);
 
   document.addEventListener("dragstart", (event) => {
-    dragSource = event.target?.closest?.("*") || null;
+    dragSource = event.target?.closest?.("[draggable='true']") || event.target?.closest?.(ACTIONABLE) || null;
   }, true);
-
-
 
   document.addEventListener("dragend", () => {
     dragSource = null;
@@ -993,29 +637,13 @@
     dragSource = null;
   }, true);
 
-
-
-
-
-
-
-
-
-
-
-
-
-
   const scrollStates = new WeakMap();
 
   function resolveScrollTarget(event) {
 
-
-
     if (!event) return window;
     const t = event.target;
     if (t === document || t === document.documentElement) return window;
-
 
     if (t instanceof ShadowRoot) return t.host || window;
     if (t.nodeType === 1) return t;
@@ -1036,9 +664,6 @@
   function handleScrollEvent(event) {
     if (!active || paused) return;
 
-
-
-
     if (isCaptureScrolling) return;
     const scroller = resolveScrollTarget(event);
     if (!scroller) return;
@@ -1058,9 +683,6 @@
     state.timer = setTimeout(() => {
       const state2 = scrollStates.get(scroller);
       if (!state2) return;
-
-
-
 
       const currentPos = currentScrollPosition(scroller);
       const distance = Math.abs(currentPos.top - state2.startTop);
@@ -1088,10 +710,6 @@
 
   document.addEventListener("scroll", handleScrollEvent, { passive: true, capture: true });
 
-
-
-
-
   function bumpActivity() { lastActivity = Date.now(); }
 
   function startIdleCheck() {
@@ -1112,28 +730,10 @@
     idleTimer = null;
   }
 
-
-
-
   ["keydown", "click", "wheel"].forEach((evt) => {
     document.addEventListener(evt, bumpActivity, { passive: true, capture: true });
   });
   window.addEventListener("scroll", bumpActivity, { passive: true });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
   let topLevelViewport = isTopFrame
     ? { width: innerWidth, height: innerHeight }
@@ -1144,27 +744,11 @@
     }, { passive: true });
   }
 
-
-
-
-
-
-
-
-
-
-
-
   window.addEventListener("message", (event) => {
     if (event.source === window) return;
     const data = event.data;
     if (!data || data.type !== "BTR_FRAME_HANDSHAKE") return;
     if (!data.nonce) return;
-
-
-
-
-
 
     const findIframeByWindow = (root, source) => {
       if (!root || !root.querySelectorAll) return null;
@@ -1196,14 +780,6 @@
     const matchedIframe = findIframeByWindow(document, event.source);
     if (!matchedIframe) return;
 
-
-
-
-
-
-
-
-
     if (iframeRegistry) {
       for (const [oldNonce, entry] of iframeRegistry) {
         if (entry.iframe === matchedIframe && oldNonce !== data.nonce) {
@@ -1213,16 +789,12 @@
       iframeRegistry.set(data.nonce, { iframe: matchedIframe, innerWidth: Number(data.innerWidth) || 0, innerHeight: Number(data.innerHeight) || 0 });
     }
 
-
     sendTransformToChild(matchedIframe, data.nonce, Number(data.innerWidth) || 0, Number(data.innerHeight) || 0);
   });
-
-
 
   function sendTransformToChild(iframeEl, nonce, childInnerWidth, childInnerHeight) {
     if (!iframeEl) return;
     const rect = iframeEl.getBoundingClientRect();
-
 
     if (!childInnerWidth || !childInnerHeight) {
 
@@ -1231,12 +803,6 @@
     }
     const scaleX = rect.width > 0 ? rect.width / childInnerWidth : 1;
     const scaleY = rect.height > 0 ? rect.height / childInnerHeight : 1;
-
-
-
-
-
-
 
     const parentScaleX = cumulativeTransform.scaleX ?? cumulativeTransform.scale ?? 1;
     const parentScaleY = cumulativeTransform.scaleY ?? cumulativeTransform.scale ?? 1;
@@ -1257,14 +823,9 @@
     } catch (_) {  }
   }
 
-
-
-
   let transformRefreshTimer = null;
   function scheduleTransformRefresh() {
     if (!iframeRegistry || iframeRegistry.size === 0) return;
-
-
 
     for (const [nonce, entry] of iframeRegistry) {
       if (!entry.iframe || !entry.iframe.isConnected) {
@@ -1284,30 +845,10 @@
     }, 100);
   }
 
-
-
-
-
-
   window.addEventListener("scroll", scheduleTransformRefresh, { passive: true });
-
-
-
-
-
 
   document.addEventListener("scroll", scheduleTransformRefresh, { passive: true, capture: true });
   window.addEventListener("resize", scheduleTransformRefresh, { passive: true });
-
-
-
-
-
-
-
-
-
-
 
   if (typeof MutationObserver !== "undefined") {
     try {
@@ -1325,12 +866,6 @@
     } catch (_) {  }
   }
 
-
-
-
-
-
-
   const iframeResizeObserver = (typeof ResizeObserver !== "undefined")
     ? new ResizeObserver((entries) => {
 
@@ -1346,8 +881,6 @@
       })
     : null;
 
-
-
   if (iframeRegistry && iframeResizeObserver) {
     const origSet = iframeRegistry.set.bind(iframeRegistry);
     iframeRegistry.set = function(nonce, entry) {
@@ -1355,7 +888,7 @@
       if (entry?.iframe) {
         try { iframeResizeObserver.observe(entry.iframe); } catch (_) {  }
       }
-      return entry;
+      return iframeRegistry;
     };
     const origDelete = iframeRegistry.delete.bind(iframeRegistry);
     iframeRegistry.delete = function(nonce) {
@@ -1365,9 +898,6 @@
       }
       return origDelete(nonce);
     };
-
-
-
 
     const origClear = iframeRegistry.clear.bind(iframeRegistry);
     iframeRegistry.clear = function() {
@@ -1380,14 +910,6 @@
     };
   }
 
-
-
-
-
-
-
-
-
   if (!isTopFrame && frameNonce) {
     const sendHandshake = (attempt) => {
       try {
@@ -1399,7 +921,6 @@
           innerHeight: innerHeight
         }, "*");
       } catch (_) {  }
-
 
       if (attempt < 5 && handshakeRetry !== null) {
         handshakeRetry = setTimeout(() => sendHandshake(attempt + 1), 100 * Math.pow(2, attempt));
@@ -1426,7 +947,6 @@
       handshakeRetry = null;
     });
 
-
     let resizeRehandshakeTimer = null;
     window.addEventListener("resize", () => {
       if (innerWidth === lastInnerWidth && innerHeight === lastInnerHeight) return;
@@ -1445,18 +965,10 @@
     sendHandshake(0);
   }
 
-
-
-
-
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-
-
 
     if (message.type === "RECORDER_STOP") {
       (async () => {
-
-
 
         if (active && document.activeElement) {
           const el = document.activeElement;
@@ -1494,8 +1006,6 @@
     if (message.type === "RECORDER_START" || message.type === "RECORDER_ATTACH") {
       excludedDomains = message.excludedDomains || [];
 
-
-
       if (message.settings && typeof message.settings.sensitivePatterns === "string") {
         sensitivePatterns = message.settings.sensitivePatterns;
       }
@@ -1505,20 +1015,9 @@
       const isExcluded = domainBlocked();
       active = true;
 
-
-
-
-
-
-
       clearCapture();
 
-
-
       if (isExcluded) {
-
-
-
 
         paused = true;
         if (isTopFrame) {
@@ -1527,29 +1026,13 @@
         }
       } else {
 
-
-
-
-
         paused = message.paused === true;
         if (isTopFrame) createStatusOverlay();
       }
 
-
-
-
-
-
-
-
       if (message.settings && typeof message.settings.autoPauseIdle === "number") startIdleCheck();
 
-
-
-
-
-      if (isTopFrame) sendResponse({ ok: true });
-      return true;
+      if (isTopFrame) { sendResponse({ ok: true }); return; }
     }
     if (message.type === "RECORDER_PAUSE") {
       paused = true;
@@ -1572,8 +1055,6 @@
     if (message.type === "HIDE_STATUS" && isTopFrame) {
       hideStatus();
 
-
-
       setTimeout(() => sendResponse({ ok: true }), 50);
       return true;
     }
@@ -1584,18 +1065,8 @@
     if (message.type === "PREPARE_CAPTURE") showCaptureOverlay(message);
     if (message.type === "CLEAR_CAPTURE") clearCapture();
 
-
-
-
-
     if (message.type === "HIDE_FIXED_ELEMENTS") {
       try {
-
-
-
-
-
-
 
         const hidden = window.__btr_hidden_fixed || [];
         const visit = (root) => {
@@ -1629,16 +1100,12 @@
       } catch (_) {  }
     }
 
-
     if (message.type === "CAPTURE_SCROLL_START") {
       isCaptureScrolling = true;
     }
     if (message.type === "CAPTURE_SCROLL_END") {
       isCaptureScrolling = false;
     }
-
-
-
 
     if (message.type === "REFRESH_MASKS") {
       try {
@@ -1650,9 +1117,6 @@
       return true;
     }
 
-
-
-
     if (message.type === "GET_IFRAME_OFFSET" && isTopFrame && iframeRegistry) {
       try {
         let offset = null;
@@ -1660,17 +1124,12 @@
         if (message.nonce) {
           const entry = iframeRegistry.get(message.nonce);
 
-
-
-
-
           const iframeEl = entry?.iframe || entry;
           if (iframeEl && typeof iframeEl.getBoundingClientRect === "function") {
             const rect = iframeEl.getBoundingClientRect();
             offset = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
           }
         }
-
 
         if (!offset && message.url) {
           const iframes = document.querySelectorAll("iframe");
@@ -1691,7 +1150,6 @@
       return true;
     }
 
-
     if (!active || !isTopFrame) return;
 
     if (message.type === "RECORDER_NAVIGATION") {
@@ -1702,6 +1160,27 @@
     }
     if (message.type === "RECORDER_NEW_WINDOW") {
       send("NEW_WINDOW", document.body, null, { navigationUrl: message.url || location.href });
+    }
+  });
+
+  let lastSpaUrl = location.href;
+  const patchHistoryMethod = (method) => {
+    const original = history[method];
+    history[method] = function (...args) {
+      const result = original.apply(this, args);
+      if (active && !paused && !domainBlocked() && isTopFrame && location.href !== lastSpaUrl) {
+        lastSpaUrl = location.href;
+        send("NAVIGATION", document.body, null, { navigationUrl: location.href });
+      }
+      return result;
+    };
+  };
+  patchHistoryMethod("pushState");
+  patchHistoryMethod("replaceState");
+  window.addEventListener("popstate", () => {
+    if (active && !paused && !domainBlocked() && isTopFrame && location.href !== lastSpaUrl) {
+      lastSpaUrl = location.href;
+      send("NAVIGATION", document.body, null, { navigationUrl: location.href });
     }
   });
 })();

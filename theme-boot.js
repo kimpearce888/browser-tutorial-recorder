@@ -1,11 +1,11 @@
 (function () {
-  var dark;
+  let dark;
   try {
-    var cached = localStorage.getItem("btr-theme");
+    const cached = localStorage.getItem("btr-theme");
     if (cached) {
-      var parts = cached.split("|");
-      var theme = parts[0] || "system";
-      var highContrast = parts[1] === "1";
+      const parts = cached.split("|");
+      const theme = parts[0] || "system";
+      const highContrast = parts[1] === "1";
       dark = theme === "dark" || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
       document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
       if (highContrast) document.documentElement.classList.add("high-contrast");
@@ -17,10 +17,10 @@
   document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
   try {
     chrome.storage.local.get("settings", function (result) {
-      var s = result && result.settings;
-      var theme = (s && s.theme) || "system";
-      var highContrast = s && s.highContrast;
-      var d = theme === "dark" || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+      const s = result && result.settings;
+      const theme = (s && s.theme) || "system";
+      const highContrast = s && s.highContrast;
+      const d = theme === "dark" || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
       document.documentElement.setAttribute("data-theme", d ? "dark" : "light");
       if (highContrast) document.documentElement.classList.add("high-contrast");
       else document.documentElement.classList.remove("high-contrast");

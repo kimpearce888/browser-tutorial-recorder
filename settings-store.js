@@ -127,13 +127,9 @@ export function eventToKey(event) {
     return parts.join("+");
   }
 
-
-
   if (event.shiftKey && key.length === 1 && /[a-z0-9]/.test(key)) {
     parts.push("shift");
   }
-
-
 
   parts.push(key);
   return parts.join("+");
@@ -167,20 +163,12 @@ export async function initTheme() {
     applyTheme(settings.theme);
     applyHighContrast(settings.highContrast);
 
-
-
-
-
-
-
     if (!_mediaListenerRegistered) {
       _mediaListenerRegistered = true;
       window.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener?.("change", () => {
         if ((cache || {}).theme === "system") applyTheme("system");
       });
     }
-
-
 
     if (!_subscribed) {
       _subscribed = true;

@@ -254,7 +254,6 @@ button { cursor: pointer; }
 .card.selected {
   border-color: var(--accent);
 
-
   box-shadow: 0 0 0 3px var(--bg-accent-soft), 0 14px 30px var(--shadow);
 }
 
@@ -284,7 +283,6 @@ button { cursor: pointer; }
   position: absolute;
   top: 10px; left: 10px;
 
-
   background: var(--bg-elevated);
   color: var(--text);
   font-size: 9px;
@@ -302,7 +300,6 @@ button { cursor: pointer; }
   top: 10px; right: 10px;
   width: 22px; height: 22px;
   border-radius: 6px;
-
 
   border: 2px solid var(--bg-elevated);
   background: var(--bg-elevated);

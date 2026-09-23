@@ -115,14 +115,11 @@ globalThis.chrome = {
     onInstalled: { addListener: () => {} },
     getURL: (p) => `chrome-extension://testid/${p}`,
     lastError: null,
+    sendMessage: () => Promise.resolve(),
   },
   tabs: {
     onCreated: { addListener: () => {} }, onUpdated: { addListener: () => {} }, onRemoved: { addListener: () => {} },
     query: async () => [], get: async () => null, create: () => {}, update: async () => {},
-
-
-
-
 
     captureVisibleTab: async () => "",
     sendMessage: (...args) => {
@@ -147,6 +144,7 @@ console.log("══════════════════════�
 
 console.log("━ shared.js ━");
 const shared = await import("./shared.js");
+const mod = shared;
 
 assertEq(shared.escapeHtml("<script>"), "&lt;script&gt;", "escapeHtml");
 assertEq(shared.escapeHtml(null), "", "escapeHtml null");
@@ -288,8 +286,6 @@ try {
   const origCreate = globalThis.URL.createObjectURL;
   globalThis.URL.createObjectURL = (blob) => { downloaded = { blob, url: "mock://download" }; return "mock://download"; };
 
-
-
   const origRevoke = globalThis.URL.revokeObjectURL;
   globalThis.URL.revokeObjectURL = () => {};
   const origClick = dom.window.HTMLAnchorElement.prototype.click;
@@ -307,10 +303,8 @@ try {
   await exporter.exportTutorial(tutorial, "text", 0);
   assert(downloaded?.name === "my-tutorial.txt", "text export filename");
 
-
   try { await exporter.exportTutorial({id:"t",title:"T",steps:[]}, "png", 0); assert(false, "should throw"); }
   catch (e) { assert(e.message.includes("Select a step"), "PNG no-step throws"); }
-
 
   try { await exporter.exportTutorial(tutorial, "png", 99); assert(false, "should throw"); }
   catch (_) { assert(true, "PNG bad-index throws"); }
@@ -335,18 +329,15 @@ try {
 
   const sender = { tab: { id: 1, windowId: 1 } };
 
-
   {
     const r = await new Promise(res => messageListener({ type: "GET_STATE" }, sender, res));
     assert(r.session === null, "GET_STATE returns null when no session");
   }
 
-
   {
     const r = await new Promise(res => messageListener({ type: "GET_TUTORIALS" }, sender, res));
     assert(Array.isArray(r.tutorials) && r.tutorials.length === 0, "GET_TUTORIALS returns empty array");
   }
-
 
   {
     await new Promise(res => messageListener({ type: "SAVE_TUTORIAL", tutorial: { id:"round-trip", title:"Round Trip", steps:[] } }, sender, res));
@@ -354,12 +345,10 @@ try {
     assert(r.tutorial?.title === "Round Trip", "GET_TUTORIAL returns saved tutorial");
   }
 
-
   {
     const r = await new Promise(res => messageListener({ type: "DUPLICATE_TUTORIAL", id: "round-trip" }, sender, res));
     assert(r.ok === true && r.tutorial.title.includes("(copy)"), "DUPLICATE_TUTORIAL creates copy");
   }
-
 
   {
     await new Promise(res => messageListener({ type: "DELETE_TUTORIAL", id: "round-trip" }, sender, res));
@@ -367,12 +356,10 @@ try {
     assert(r.tutorial === null, "DELETE_TUTORIAL removes tutorial");
   }
 
-
   {
     const r = await new Promise(res => messageListener({ type: "UNKNOWN" }, sender, res));
     assert(r.ok === false, "unknown type returns ok:false");
   }
-
 
   {
     globalThis.chrome.tabs.query = async () => [{ id: 99, windowId: 1, url: "chrome://settings" }];
@@ -380,13 +367,11 @@ try {
     assert(r.ok === false, "START_RECORDING on chrome:// fails");
   }
 
-
   {
     globalThis.chrome.tabs.query = async () => [{ id: 99, windowId: 1, url: "" }];
     const r = await new Promise(res => messageListener({ type: "START_RECORDING" }, sender, res));
     assert(r.ok === false, "START_RECORDING on empty URL fails");
   }
-
 
   {
     globalThis.chrome.tabs.query = async () => [{ id: 99, windowId: 1, url: "file:///etc/passwd" }];
@@ -403,8 +388,6 @@ console.log("━ fixes: P0-1 submit, P0-2 click dedup ━");
 
 {
 
-
-
   const sender2 = { tab: { id: 7, windowId: 1 } };
   const r = await new Promise(res => messageListener({
     type: "RECORD_EVENT",
@@ -417,8 +400,6 @@ console.log("━ fixes: P0-1 submit, P0-2 click dedup ━");
 }
 
 {
-
-
 
   const contentSrc = await import("node:fs").then(fs => fs.readFileSync("./content.js", "utf8"));
   const dom2 = new JSDOM(`<!DOCTYPE html><html><body>
@@ -471,7 +452,6 @@ console.log("━ fixes: P0-1 submit, P0-2 click dedup ━");
 
   assert(found.steps[2].description === "Step 3", "summary preserves step descriptions for search");
 
-
   await new Promise(res => messageListener({ type: "DELETE_TUTORIAL", id: "summary-test" }, senderLocal, res));
 }
 
@@ -488,9 +468,7 @@ console.log("━ fixes: P0-1 submit, P0-2 click dedup ━");
   globalThis.chrome.windows.update = async () => {};
   globalThis.chrome.windows.getAll = async () => [];
 
-
   globalThis.chrome.scripting.executeScript = async () => [{ result: [720, 720, 0] }];
-
 
   const origCapture = globalThis.chrome.tabs.captureVisibleTab;
   globalThis.chrome.tabs.captureVisibleTab = async () => "data:image/png;base64,AAAA";
@@ -517,7 +495,6 @@ console.log("━ fixes: P0-1 submit, P0-2 click dedup ━");
   } catch (e) {
     assert(false, "CAPTURE_FULL_PAGE smoke test: " + e.message);
   }
-
 
   globalThis.chrome.tabs.get = origTabsGet;
   globalThis.chrome.tabs.update = origTabsUpdate;
@@ -566,7 +543,6 @@ console.log("━ fixes: P0-1 submit, P0-2 click dedup ━");
   };
   await globalThis.chrome.storage.local.set({ activeSession: session });
 
-
   const origTabsGet = globalThis.chrome.tabs.get;
   const origWindowsGetAll = globalThis.chrome.windows.getAll;
   const origScriptingExecute = globalThis.chrome.scripting.executeScript;
@@ -584,8 +560,6 @@ console.log("━ fixes: P0-1 submit, P0-2 click dedup ━");
 
   try {
 
-
-
     const senderLocal = { tab: { id: 1, windowId: 1 }, frameId: 0 };
     const r = await new Promise(res => messageListener({
       type: "RECORD_EVENT",
@@ -596,8 +570,6 @@ console.log("━ fixes: P0-1 submit, P0-2 click dedup ━");
       viewport: { width: 1280, height: 720, devicePixelRatio: 1 }
     }, senderLocal, res));
 
-
-
     const stored = await globalThis.chrome.storage.local.get("activeSession");
     const steps = stored.activeSession?.steps || [];
     const hasClick = steps.some(s => s.action === "CLICK");
@@ -607,7 +579,6 @@ console.log("━ fixes: P0-1 submit, P0-2 click dedup ━");
   } catch (e) {
     assert(false, "P0-1 SUBMIT retract test: " + e.message);
   }
-
 
   await globalThis.chrome.storage.local.remove("activeSession");
   globalThis.chrome.tabs.get = origTabsGet;
@@ -624,26 +595,19 @@ console.log("━ fixes: P0-1 submit, P0-2 click dedup ━");
 
   await new Promise(res => messageListener({ type: "SAVE_TUTORIAL", tutorial: { id: "export-test", title: "Export Test", steps: [{ id: "s1", number: 1, description: "Step 1", screenshot: { image: "data:image/png;base64,AAA", width: 800, height: 600 }, annotations: [] }] } }, senderLocal, res));
 
-
   let getTutorialCalled = false;
   let getTutorialId = null;
   const origSendMessage = globalThis.chrome.runtime.sendMessage;
 
-
-
   const r = await new Promise(res => messageListener({ type: "GET_TUTORIAL", id: "export-test" }, senderLocal, res));
   assert(r?.tutorial?.title === "Export Test", "GET_TUTORIAL returns full tutorial for dashboard export (P0)");
   assert(r?.tutorial?.steps[0]?.screenshot?.image === "data:image/png;base64,AAA", "GET_TUTORIAL preserves screenshot.image (P0)");
-
 
   await new Promise(res => messageListener({ type: "DELETE_TUTORIAL", id: "export-test" }, senderLocal, res));
 }
 
 {
   const exporter = await import("./exporter.js");
-
-
-
 
   try {
     await exporter.loadImage("javascript:alert(1)");
@@ -676,7 +640,6 @@ console.log("━ fixes: P0-1 submit, P0-2 click dedup ━");
     ]
   };
   const normalized = shared.normalizeTutorial(t);
-
 
   const needsMigration = JSON.stringify({ ...normalized, version: t.version }) !== JSON.stringify(t);
   assert(!needsMigration, "normalizeTutorial is idempotent for well-formed tutorials");
@@ -719,12 +682,9 @@ const s5b = passed;
   snap1.steps[0].screenshot.image = "data:image/png;base64,CROPPED";
   const snap2 = shared.clone(tutorial);
 
-
   assert(tutorial.steps[0].screenshot.image === "data:image/png;base64,ORIGINAL", "original tutorial image unchanged after snapshot mutation");
 
-
   assert(snap1.steps[0].screenshot.image === "data:image/png;base64,CROPPED", "snapshot 1 has cropped image");
-
 
   assert(snap2.steps[0].screenshot.image === "data:image/png;base64,ORIGINAL", "snapshot 2 has original image");
 }
@@ -738,6 +698,331 @@ const s5b = passed;
 }
 
 console.log(`  → ${passed - s5b} passed\n`);
+
+const s6 = passed;
+console.log("━ edge case coverage ━");
+
+{
+  const a = mod.normalizeAnnotation({ type: "rectangle", color: "#abc", x: -100, y: -100, width: 99999, height: 99999 }, 0, 1280, 720);
+  assert(a.x >= 0 && a.y >= 0, "annotation clamped to canvas bounds");
+  assert(a.width <= 1280 && a.height <= 720, "annotation width/height clamped to canvas");
+  assert(a.color === "#abc", "3-digit hex preserved by sanitizeColor");
+}
+
+{
+  const t = mod.normalizeTutorial({ id: "test", title: "T", steps: [null, { id: "s1", screenshot: null }] });
+  assert(t.steps.length === 2, "null step preserved as empty step");
+  assert(t.steps[0].id != null, "null step gets generated id");
+  assert(t.steps[1].screenshot.width > 0, "null screenshot gets default dimensions");
+}
+
+{
+  const a = mod.normalizeAnnotation({ type: "marker", x: -50, y: -50, width: 28, height: 28 }, 0, 1280, 720);
+  assert(a.x >= 14, "marker center x clamped to >= width/2");
+  assert(a.y >= 14, "marker center y clamped to >= height/2");
+}
+
+{
+  const a = mod.normalizeAnnotation({ type: "arrow", startX: -10, startY: 200, endX: -5, endY: 300 }, 0, 1280, 720);
+  assert(a.startX === 0, "arrow startX clamped to 0");
+  assert(a.startY === 100, "arrow startY clamped to 100");
+}
+
+{
+  const result = mod.withAlpha("#abc", 0.5);
+  assert(result.startsWith("#aabbcc"), "withAlpha expands 3-digit hex");
+  assert(result.length === 9, "withAlpha returns 8-char hex + 2-char alpha");
+}
+
+{
+  const result = mod.withAlpha("#ff0000", 1);
+  assert(result === "#ff0000ff", "withAlpha full opacity");
+  assert(mod.withAlpha("invalid", 0.5) === "#ff735280", "withAlpha falls back to brand color");
+}
+
+{
+  const box = mod.annotationBox({ type: "marker", x: 100, y: 100, width: 20, height: 20 });
+  assert(box.x === 90 && box.y === 90, "marker annotationBox returns top-left from center");
+  const box2 = mod.annotationBox({ type: "rectangle", x: 50, y: 60, width: 100, height: 80 });
+  assert(box2.x === 50 && box2.y === 60, "rectangle annotationBox returns x/y directly");
+}
+
+{
+  assert(mod.clamp(5, 0, 10) === 5, "clamp returns value when in range");
+  assert(mod.clamp(-5, 0, 10) === 0, "clamp returns min when below");
+  assert(mod.clamp(15, 0, 10) === 10, "clamp returns max when above");
+}
+
+{
+  assert(mod.sanitizeNumber(42, 0) === 42, "sanitizeNumber returns valid number");
+  assert(mod.sanitizeNumber("abc", 99) === 99, "sanitizeNumber returns fallback for NaN");
+  assert(mod.sanitizeNumber(Infinity, 0) === 0, "sanitizeNumber returns fallback for Infinity");
+}
+
+{
+  assert(mod.sanitizeImageUrl("data:image/png;base64,AAAA") === "data:image/png;base64,AAAA", "valid data URL passes");
+  assert(mod.sanitizeImageUrl("javascript:alert(1)") === "", "javascript: URL blocked");
+  assert(mod.sanitizeImageUrl("https://example.com/img.png") === "", "https: URL blocked");
+  assert(mod.sanitizeImageUrl("") === "", "empty URL returns empty");
+}
+
+{
+  assert(mod.sanitizeColor("#fff") === "#fff", "3-digit hex passes");
+  assert(mod.sanitizeColor("#ffffff") === "#ffffff", "6-digit hex passes");
+  assert(mod.sanitizeColor("red") === "#ff7352", "named color falls back");
+  assert(mod.sanitizeColor(null) === "#ff7352", "null falls back");
+}
+
+{
+  assert(mod.escapeHtml("<script>") === "&lt;script&gt;", "escapeHtml escapes angle brackets");
+  assert(mod.escapeHtml('"hello"') === "&quot;hello&quot;", "escapeHtml escapes quotes");
+  assert(mod.escapeHtml(null) === "", "escapeHtml handles null");
+  assert(mod.escapeAttr("test`code") === "testcode", "escapeAttr strips backticks");
+}
+
+{
+  const c = mod.clone({ a: 1, b: [2, 3] });
+  assert(c.a === 1 && c.b[0] === 2, "clone produces deep copy");
+  c.b[0] = 99;
+  assert(mod.clone({ a: 1, b: [2, 3] }).b[0] === 2, "clone is independent of original");
+}
+
+{
+  const points = mod.arrowHeadPoints({ startX: 0, startY: 100, endX: 100, endY: 0, arrowHeadSize: 10 }, 200, 100);
+  assert(typeof points === "string", "arrowHeadPoints returns string");
+  assert(points.split(" ").length === 3, "arrowHeadPoints returns 3 coordinate pairs");
+  assert(points.split(",")[0] === "100", "arrowHeadPoints endpoint x is 100");
+}
+
+{
+  const size = mod.canvasSize({ screenshot: { width: 1920, height: 1080 } });
+  assert(size.width === 1920 && size.height === 1080, "canvasSize returns screenshot dimensions");
+  const defaultSize = mod.canvasSize({});
+  assert(defaultSize.width === 1280 && defaultSize.height === 720, "canvasSize returns defaults for missing screenshot");
+}
+
+{
+  const t = mod.normalizeTutorial({ id: "test-id", title: "T", steps: [] });
+  assert(t.version === 4, "normalizeTutorial sets version to 4");
+  assert(t.steps.length === 0, "normalizeTutorial handles empty steps array");
+  assert(t.id === "test-id", "normalizeTutorial preserves valid id");
+}
+
+{
+  try {
+    mod.normalizeTutorial(null);
+    assert(false, "normalizeTutorial(null) should throw");
+  } catch (e) {
+    assert(e.message.includes("Invalid"), "normalizeTutorial(null) throws with clear message");
+  }
+  try {
+    mod.normalizeTutorial([1, 2, 3]);
+    assert(false, "normalizeTutorial(array) should throw");
+  } catch (e) {
+    assert(e.message.includes("Invalid"), "normalizeTutorial(array) throws with clear message");
+  }
+}
+
+{
+  const t = mod.normalizeTutorial({ id: "test", title: "A".repeat(600), steps: [] });
+  assert(t.title.length === 500, "normalizeTutorial caps title at 500 chars");
+}
+
+{
+  const t = mod.normalizeTutorial({
+    id: "test", title: "T", steps: [
+      { id: "s1", annotations: [{ type: "text", text: "A".repeat(600) }] }
+    ]
+  });
+  assert(t.steps[0].annotations[0].text.length === 500, "annotation text capped at 500 chars");
+}
+
+console.log(`  → ${passed - s6} passed\n`);
+
+const s7 = passed;
+console.log("━ settings-store + eventToKey ━");
+
+{
+  assert(ss.DEFAULT_SHORTCUTS.undo.keys === "mod+z", "default undo shortcut");
+  assert(ss.DEFAULT_SHORTCUTS.save.keys === "mod+s", "default save shortcut");
+  assert(ss.DEFAULT_SHORTCUTS.preview.keys === "mod+shift+p", "default preview shortcut");
+  assert(Object.keys(ss.DEFAULT_SHORTCUTS).length >= 20, "20+ default shortcuts");
+  assert(ss.GLOBAL_COMMANDS.length === 4, "4 global commands");
+}
+
+{
+  const fakeEvent = { metaKey: true, ctrlKey: false, shiftKey: false, altKey: false, key: "z" };
+  assert(ss.eventToKey(fakeEvent) === "mod+z", "eventToKey: mod+z");
+}
+
+{
+  const fakeEvent = { metaKey: false, ctrlKey: true, shiftKey: true, altKey: false, key: "z" };
+  assert(ss.eventToKey(fakeEvent) === "mod+shift+z", "eventToKey: mod+shift+z");
+}
+
+{
+  const fakeEvent = { metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, key: "?" };
+  assert(ss.eventToKey(fakeEvent) === "?", "eventToKey: ? (no modifiers)");
+}
+
+{
+  const fakeEvent = { metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, key: " " };
+  assert(ss.eventToKey(fakeEvent) === "space", "eventToKey: space");
+}
+
+{
+  const fakeEvent = { metaKey: false, ctrlKey: false, shiftKey: true, altKey: false, key: "A" };
+  assert(ss.eventToKey(fakeEvent) === "shift+a", "eventToKey: shift+a (lowercased)");
+}
+
+{
+  const fakeEvent = { metaKey: false, ctrlKey: false, shiftKey: false, altKey: true, key: "Escape" };
+  assert(ss.eventToKey(fakeEvent) === "alt+escape", "eventToKey: alt+escape");
+}
+
+{
+  const fakeEvent = { metaKey: true, ctrlKey: false, shiftKey: false, altKey: false, key: "s" };
+  assert(ss.matchesShortcut(fakeEvent, "save") === true, "matchesShortcut: Ctrl+S matches save");
+}
+
+{
+  const fakeEvent = { metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, key: "x" };
+  assert(ss.matchesShortcut(fakeEvent, "save") === false, "matchesShortcut: X does not match save");
+}
+
+{
+  assert(typeof ss.getShortcut === "function", "getShortcut is a function");
+  assert(ss.getShortcut("undo") === "mod+z", "getShortcut returns default when no cache");
+  assert(ss.getShortcut("nonexistent") === null, "getShortcut returns null for unknown action");
+}
+
+{
+  assert(typeof ss.subscribe === "function", "subscribe is a function");
+  let called = false;
+  const unsub = ss.subscribe(() => { called = true; });
+  assert(typeof unsub === "function", "subscribe returns unsubscribe function");
+  unsub();
+}
+
+console.log(`  → ${passed - s7} passed\n`);
+
+const s8 = passed;
+console.log("━ gif-encoder edge cases ━");
+
+{
+  const gif2 = await import("./gif-encoder.js");
+  const emptyRgba = new Uint8Array(4);
+  emptyRgba[3] = 255;
+  const blob = await gif2.encodeGif([{ width: 1, height: 1, rgba: emptyRgba, delayMs: 100 }]);
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  assert(buf[0] === 0x47 && buf[1] === 0x49, "1x1 GIF has GIF89a header");
+  assert(buf[buf.length - 1] === 0x3b, "1x1 GIF has trailer");
+}
+
+{
+  const gif3 = await import("./gif-encoder.js");
+  const rgba = new Uint8Array(8);
+  rgba[3] = 255; rgba[7] = 255;
+  const blob = await gif3.encodeGif([{ width: 2, height: 1, rgba, delayMs: 0 }]);
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  assert(buf.length > 30, "GIF with delayMs=0 is non-trivial");
+}
+
+{
+  const gif4 = await import("./gif-encoder.js");
+  const frames = [];
+  for (let f = 0; f < 3; f++) {
+    const rgba = new Uint8Array(4);
+    rgba[0] = f * 80; rgba[1] = 100; rgba[2] = 200; rgba[3] = 255;
+    frames.push({ width: 1, height: 1, rgba, delayMs: 500 });
+  }
+  const blob = await gif4.encodeGif(frames, { loop: true });
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  assert(String.fromCharCode(...buf.slice(0, 6)) === "GIF89a", "multi-frame GIF has header");
+  let found = false;
+  const target = "NETSCAPE2.0";
+  for (let i = 0; i <= buf.length - target.length; i++) {
+    let match = true;
+    for (let j = 0; j < target.length; j++) {
+      if (buf[i+j] !== target.charCodeAt(j)) { match = false; break; }
+    }
+    if (match) { found = true; break; }
+  }
+  assert(found, "multi-frame GIF has NETSCAPE loop extension");
+}
+
+console.log(`  → ${passed - s8} passed\n`);
+
+const s9 = passed;
+console.log("━ background message routing ━");
+
+{
+  const sender = { tab: { id: 1, windowId: 1 } };
+  const r = await new Promise(res => messageListener({ type: "GET_STATE" }, sender, res));
+  assert(r?.session === null || r?.session === undefined, "GET_STATE with no session returns null/undefined");
+}
+
+{
+  const sender = { tab: { id: 1, windowId: 1 } };
+  const r = await new Promise(res => messageListener({ type: "GET_TUTORIAL", id: "nonexistent-id" }, sender, res));
+  assert(r?.tutorial === null, "GET_TUTORIAL with bad id returns null");
+}
+
+{
+  const sender = { tab: { id: 1, windowId: 1 } };
+  const r = await new Promise(res => messageListener({ type: "GET_TUTORIALS" }, sender, res));
+  assert(Array.isArray(r?.tutorials), "GET_TUTORIALS returns array");
+}
+
+{
+  const sender = { tab: { id: 1, windowId: 1 } };
+  const r = await new Promise(res => messageListener({ type: "GET_TUTORIALS_SUMMARY" }, sender, res));
+  assert(Array.isArray(r?.tutorials), "GET_TUTORIALS_SUMMARY returns array");
+}
+
+{
+  const sender = { tab: { id: 1, windowId: 1 } };
+  const r = await new Promise(res => messageListener({ type: "DELETE_TUTORIAL", id: "nonexistent" }, sender, res));
+  assert(r?.ok === true, "DELETE_TUTORIAL returns ok even for nonexistent id");
+}
+
+{
+  const sender = { tab: { id: 1, windowId: 1 } };
+  const r = await new Promise(res => messageListener({ type: "DELETE_TUTORIALS", ids: [] }, sender, res));
+  assert(r?.ok === true, "DELETE_TUTORIALS with empty array returns ok");
+}
+
+{
+  const sender = { tab: { id: 1, windowId: 1 } };
+  const r = await new Promise(res => messageListener({ type: "DELETE_TUTORIALS", ids: ["nonexistent"] }, sender, res));
+  assert(r?.ok === true, "DELETE_TUTORIALS with nonexistent ids returns ok");
+}
+
+{
+  const sender = { tab: { id: 1, windowId: 1 } };
+  const r = await new Promise(res => messageListener({ type: "START_RECORDING" }, sender, res));
+  assert(r?.ok === false, "START_RECORDING with no valid tab returns ok:false");
+}
+
+{
+  const sender = { tab: { id: 1, windowId: 1 } };
+  const r = await new Promise(res => messageListener({ type: "CAPTURE_FULL_PAGE" }, sender, res));
+  assert(r?.ok === false, "CAPTURE_FULL_PAGE without tabId returns ok:false");
+}
+
+{
+  const sender = { tab: { id: 1, windowId: 1 } };
+  const r = await new Promise(res => messageListener({ type: "DUPLICATE_TUTORIAL" }, sender, res));
+  assert(r?.ok === false, "DUPLICATE_TUTORIAL without id returns ok:false");
+}
+
+{
+  const sender = { tab: { id: 1, windowId: 1 } };
+  const r = await new Promise(res => messageListener({ type: "UNKNOWN_TYPE" }, sender, res));
+  assert(r?.ok === false, "Unknown message type returns ok:false");
+}
+
+console.log(`  → ${passed - s9} passed\n`);
 
 console.log("═══════════════════════════════════════");
 console.log(`  TOTAL: ${passed} passed, ${failed} failed`);

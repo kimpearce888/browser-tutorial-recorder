@@ -13,8 +13,6 @@ chrome.storage?.onChanged?.addListener(async (changes, area) => {
     await withSessionLock(async () => {
       const session = await getSession();
 
-
-
       if (!session || (session.status !== "recording" && session.status !== "paused")) return;
       const newDomains = Array.isArray(changes["btr-excluded-domains"].newValue) ? changes["btr-excluded-domains"].newValue : [];
       session.excludedDomains = newDomains;
@@ -30,10 +28,6 @@ chrome.storage?.onChanged?.addListener(async (changes, area) => {
       }
     });
   }
-
-
-
-
 
   if (changes["settings"]) {
     await withSessionLock(async () => {
@@ -90,22 +84,18 @@ async function saveSession(session) {
 }
 
 async function currentTab() {
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   return tabs[0];
 }
 
 function isValidPage(url) {
-
 
   return Boolean(url) && !/^(chrome|edge|about|devtools|chrome-extension|chrome-untrusted|file|moz-extension|extension):/i.test(url);
 }
 
 async function sendToTab(tabId, message, frameId, timeoutMs = 5000) {
 
-
-
   const options = frameId == null ? undefined : { frameId };
-
 
   const send = (opts) => new Promise((resolve, reject) => {
     let settled = false;
@@ -121,7 +111,6 @@ async function sendToTab(tabId, message, frameId, timeoutMs = 5000) {
     }
   });
   const withTimeout = (p) => {
-
 
     let timer;
     const timeout = new Promise((_, reject) => {
@@ -168,11 +157,6 @@ function sessionOwnsTab(session, tabId) {
 async function addTabToSession(session, tab) {
   if (!session || !tab?.id) return;
 
-
-
-
-
-
   await withSessionLock(async () => {
     const latest = await getSession();
     if (!latest || latest.id !== session.id) return;
@@ -186,11 +170,6 @@ async function addTabToSession(session, tab) {
 }
 
 async function captureVisibleTab(tab, format, quality) {
-
-
-
-
-
 
   const focusedWindows = await chrome.windows.getAll({ populate: false }).catch(() => []);
   const focusedWindow = focusedWindows.find((w) => w.focused);
@@ -210,9 +189,6 @@ async function captureVisibleTab(tab, format, quality) {
       await new Promise((r) => setTimeout(r, TAB_ACTIVATE_DELAY_MS));
     }
 
-
-
-
     const recheckTabs = await chrome.tabs.query({ active: true, windowId: tab.windowId });
     if (recheckTabs[0]?.id && recheckTabs[0].id !== tab.id) {
       return { image: null, status: "FAILED" };
@@ -226,8 +202,6 @@ async function captureVisibleTab(tab, format, quality) {
     return { image: null, status: "FAILED", error: String(error?.message || error) };
   } finally {
 
-
-
     if (needsTabActivate && activeTab) {
       try { await chrome.tabs.update(activeTab.id, { active: true }); } catch (_) {}
     }
@@ -239,8 +213,6 @@ async function captureVisibleTab(tab, format, quality) {
 
 async function prepareCapture(tabId, payload, frameId = 0) {
 
-
-
   const hideOk = await sendToTab(tabId, { type: "HIDE_STATUS" }, 0);
   if (hideOk === null) {
     throw new Error("Failed to hide recorder badge before capture.");
@@ -250,19 +222,12 @@ async function prepareCapture(tabId, payload, frameId = 0) {
     throw new Error("Failed to prepare capture overlay.");
   }
 
-
-
-
   const maskOk = await sendToTab(tabId, { type: "PREPARE_CAPTURE", ...payload, maskOnly: true }, null);
   if (maskOk === null) {
     throw new Error("Failed to mask sensitive fields in all frames.");
   }
   const { captureDelay } = await getSettings();
   await new Promise((r) => setTimeout(r, captureDelay));
-
-
-
-
 
   await sendToTab(tabId, { type: "REFRESH_MASKS" }, null).catch(() => {});
 }
@@ -276,9 +241,6 @@ async function finishCapture(tabId, frameId = 0) {
     await sendToTab(tabId, { type: "SHOW_STATUS", count: session.steps.length }, 0);
   } else {
 
-
-
-
     await sendToTab(tabId, { type: "HIDE_STATUS" }, 0).catch(() => {});
   }
 }
@@ -287,13 +249,13 @@ async function getLightweightSession() {
   const session = await getSession();
   if (!session) return null;
 
-
   return {
     id: session.id,
     title: session.title,
     status: session.status,
     startedAt: session.startedAt,
     updatedAt: session.updatedAt,
+    totalPausedMs: session.totalPausedMs || 0,
     primaryTabId: session.primaryTabId,
     primaryWindowId: session.primaryWindowId,
     tabIds: session.tabIds,
@@ -318,53 +280,21 @@ async function recordEvent(message, sender) {
   const tabId = sender.tab?.id;
   if (!tabId) return { ok: false };
 
-
-
-
   if (!sessionOwnsTab(session, tabId)) return { ok: false };
 
-
-
-
-
-
   const sessionId = session.id;
-
-
-
-
 
   if (message.event === "CLICK") {
     return recordClickWithDedup(message, sender, tabId, sessionId);
   }
 
-
-
-
-
-
-
   if (message.event === "DOUBLE_CLICK") {
     return recordDoubleClickWithRetract(message, sender, tabId, sessionId);
   }
 
-
-
-
-
-
-
-
-
-
-
   if (message.event === "SUBMIT") {
     return recordSubmitWithRetract(message, sender, tabId, sessionId);
   }
-
-
-
-
 
   if (message.event === "NAVIGATION" || message.event === "NEW_TAB" || message.event === "NEW_WINDOW") {
     flushPendingClicksForTab(tabId);
@@ -373,30 +303,14 @@ async function recordEvent(message, sender) {
   const current = await getSession();
   if (!current || current.status !== "recording") return { ok: false };
 
-
-
-
-
-
-
-
-
-
-
   const ts = Math.floor(Date.now() / 100);
   const frameId = sender?.frameId ?? 0;
   const key = `${message.event}|${tabId}|${frameId}|${message.target?.selectors?.[0] || message.target?.tag || ""}|${Math.round(message.target?.boundingBox?.x || 0)}|${Math.round(message.target?.boundingBox?.y || 0)}|${message.url || ""}|${ts}`;
   if (pendingEvents.has(key)) return pendingEvents.get(key);
 
-
-
-
   const promise = withSessionLock(() => doRecordEvent(message, sender, tabId, sessionId)).finally(() => pendingEvents.delete(key));
   promise._ts = Date.now();
   pendingEvents.set(key, promise);
-
-
-
 
   if (pendingEvents.size > 200) {
     const now = Date.now();
@@ -425,10 +339,6 @@ async function recordClickWithDedup(message, sender, tabId, sessionId) {
     clearTimeout(pending.timer);
     pendingClicks.delete(key);
 
-
-
-
-
     const dblMessage = {
       ...pending.message,
       event: "DOUBLE_CLICK",
@@ -437,24 +347,17 @@ async function recordClickWithDedup(message, sender, tabId, sessionId) {
       cursor: message.cursor || pending.message.cursor
     };
 
-
-
     const resultPromise = withSessionLock(() => doRecordEvent(dblMessage, sender, tabId, pending.sessionId));
-
 
     resultPromise.then(pending.resolveRef, pending.rejectRef);
     return resultPromise;
   }
-
-
-
 
   let resolveRef, rejectRef;
   const outerPromise = new Promise((res, rej) => { resolveRef = res; rejectRef = rej; });
 
   const timer = setTimeout(() => {
     pendingClicks.delete(key);
-
 
     withSessionLock(() => doRecordEvent(message, sender, tabId, sessionId))
       .then(resolveRef, rejectRef);
@@ -489,61 +392,39 @@ function flushPendingClicksForTab(tabId) {
 async function recordDoubleClickWithRetract(message, sender, tabId, sessionId) {
   const key = clickDedupKey(message, sender, tabId);
 
-
   const pending = pendingClicks.get(key);
   if (pending) {
     clearTimeout(pending.timer);
     pendingClicks.delete(key);
   }
 
-
-
-
-
-
-
-  await withSessionLock(async () => {
+  const result = await withSessionLock(async () => {
     const session = await getSession();
-    if (!session || session.status !== "recording" || session.steps.length === 0) return;
-    const target = message.target || {};
-    const sel = target.selectors?.[0] || target.tag || "";
-    const bbox = target.boundingBox || {};
-
-
-
-
-    const clickFrameId = sender?.frameId ?? 0;
-
-    for (let i = session.steps.length - 1; i >= 0 && i >= session.steps.length - 5; i--) {
-      const step = session.steps[i];
-      if (step.action !== "CLICK") continue;
-
-      const stepFrameId = step.frame?.id ?? 0;
-      if (stepFrameId !== clickFrameId) continue;
-
-      const stepSel = step.target?.selectors?.[0] || step.target?.tag || "";
-      const stepBbox = step.target?.boundingBox || {};
-      const sameElement = (sel && stepSel === sel) ||
-        (Math.abs((stepBbox.x || 0) - (bbox.x || 0)) < 5 && Math.abs((stepBbox.y || 0) - (bbox.y || 0)) < 5);
-      if (!sameElement) continue;
-
-      const stepTime = step.screenshot?.timestamp || 0;
-      if (Date.now() - stepTime > 1000) continue;
-
-      session.steps.splice(i, 1);
-
-      for (let j = i; j < session.steps.length; j++) {
-        session.steps[j].number = j + 1;
+    if (session && session.status === "recording" && session.steps.length > 0) {
+      const target = message.target || {};
+      const sel = target.selectors?.[0] || target.tag || "";
+      const bbox = target.boundingBox || {};
+      const clickFrameId = sender?.frameId ?? 0;
+      for (let i = session.steps.length - 1; i >= 0 && i >= session.steps.length - 5; i--) {
+        const step = session.steps[i];
+        if (step.action !== "CLICK") continue;
+        const stepFrameId = step.frame?.id ?? 0;
+        if (stepFrameId !== clickFrameId) continue;
+        const stepSel = step.target?.selectors?.[0] || step.target?.tag || "";
+        const stepBbox = step.target?.boundingBox || {};
+        const sameElement = (sel && stepSel === sel) ||
+          (Math.abs((stepBbox.x || 0) - (bbox.x || 0)) < 5 && Math.abs((stepBbox.y || 0) - (bbox.y || 0)) < 5);
+        if (!sameElement) continue;
+        const stepTime = step.screenshot?.timestamp || 0;
+        if (Date.now() - stepTime > 1000) continue;
+        session.steps.splice(i, 1);
+        for (let j = i; j < session.steps.length; j++) session.steps[j].number = j + 1;
+        await saveSession(session);
+        break;
       }
-      await saveSession(session);
-      break;
     }
+    return doRecordEvent(message, sender, tabId, sessionId);
   });
-
-
-
-  const result = await withSessionLock(() => doRecordEvent(message, sender, tabId, sessionId));
-
 
   if (pending) {
     try { pending.resolveRef(result); } catch (_) {  }
@@ -558,7 +439,6 @@ async function recordSubmitWithRetract(message, sender, tabId, sessionId) {
   const submitSel = submitTarget.selectors?.[0] || submitTarget.tag || "";
   const submitBbox = submitTarget.boundingBox || {};
 
-
   const matchesSubmitTarget = (clickStep) => {
     if (clickStep.action !== "CLICK") return false;
     const clickTarget = clickStep.target || {};
@@ -570,15 +450,11 @@ async function recordSubmitWithRetract(message, sender, tabId, sessionId) {
     if (Math.abs((clickBbox.x || 0) - (submitBbox.x || 0)) < 5 &&
         Math.abs((clickBbox.y || 0) - (submitBbox.y || 0)) < 5) return true;
 
-
-
-
     const submitText = (submitTarget.text || "").toLowerCase().trim();
     const clickText = (clickTarget.text || "").toLowerCase().trim();
     if (submitText && clickText && submitText === clickText) return true;
     return false;
   };
-
 
   const cancelledClicks = [];
   for (const [key, pending] of pendingClicks) {
@@ -591,12 +467,6 @@ async function recordSubmitWithRetract(message, sender, tabId, sessionId) {
       cancelledClicks.push(pending);
     }
   }
-
-
-
-
-
-
 
   const submitFrameId = sender?.frameId ?? 0;
   await withSessionLock(async () => {
@@ -624,11 +494,7 @@ async function recordSubmitWithRetract(message, sender, tabId, sessionId) {
     }
   });
 
-
-
   const result = await withSessionLock(() => doRecordEvent(message, sender, tabId, sessionId));
-
-
 
   for (const pending of cancelledClicks) {
     try { pending.resolveRef(result); } catch (_) {  }
@@ -641,17 +507,7 @@ async function doRecordEvent(message, sender, tabId, expectedSessionId) {
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab) return { ok: false };
 
-
-
-
-
-
-
-
   if (fullPageCaptureInProgress) return { ok: false, skipped: "full_page_capture_in_progress" };
-
-
-
 
   if (expectedSessionId) {
     const current = await getSession();
@@ -665,18 +521,7 @@ async function doRecordEvent(message, sender, tabId, expectedSessionId) {
   const frameId = sender.frameId || 0;
   const settings = await getSettings();
 
-
-
-
-
-
-
-
-
-
-
   let frameTransform = message.frameTransform || null;
-
 
   if (!frameTransform && frameId !== 0 && (message.frameNonce || message.url)) {
     try {
@@ -692,9 +537,6 @@ async function doRecordEvent(message, sender, tabId, expectedSessionId) {
   }
 
   const transform = frameTransform || { offsetX: 0, offsetY: 0, scale: 1 };
-
-
-
 
   const tx = transform.offsetX || 0;
   const ty = transform.offsetY || 0;
@@ -722,15 +564,7 @@ async function doRecordEvent(message, sender, tabId, expectedSessionId) {
     y: ty + sy * message.cursor.y
   } : message.cursor;
 
-
-
-
-
-
-
   const result = await serializeTransaction(async () => {
-
-
 
     try {
       await prepareCapture(tabId, {
@@ -741,8 +575,6 @@ async function doRecordEvent(message, sender, tabId, expectedSessionId) {
       }, frameId);
 
       const screenshot = await captureVisibleTab(tab, settings.screenshotFormat, settings.screenshotQuality);
-
-
 
       if (!screenshot?.image) {
         return { ok: false, error: screenshot?.error || "Screenshot capture failed. The tab may have been closed or backgrounded." };
@@ -763,8 +595,8 @@ async function doRecordEvent(message, sender, tabId, expectedSessionId) {
         screenshot: {
           image: screenshot.image,
         status: screenshot.status,
-        width: message.viewport?.width || 0,
-        height: message.viewport?.height || 0,
+        width: frameId === 0 ? (message.viewport?.width || 0) : (message.viewport?.width || message.topLevelViewport?.width || 0),
+        height: frameId === 0 ? (message.viewport?.height || 0) : (message.viewport?.height || message.topLevelViewport?.height || 0),
         devicePixelRatio: message.viewport?.devicePixelRatio || 1,
         url: message.url || "",
         timestamp: Date.now()
@@ -773,9 +605,6 @@ async function doRecordEvent(message, sender, tabId, expectedSessionId) {
     };
 
     if (storedCursor) step.cursor = storedCursor;
-
-
-
 
     if ((tx || ty) || (sx !== 1 || sy !== 1)) {
       step.frameTransform = { offsetX: tx, offsetY: ty, scaleX: sx, scaleY: sy, scale: transform.scale };
@@ -796,13 +625,6 @@ async function doRecordEvent(message, sender, tabId, expectedSessionId) {
 
 async function _finalizeSessionLocked(session) {
   if (!session) return null;
-
-
-
-
-
-
-
 
   if (session.finalizedTutorialId) {
     const existing = await dbGet(session.finalizedTutorialId).catch(() => null);
@@ -897,16 +719,9 @@ async function handleMessage(message, sender) {
   switch (message.type) {
     case "GET_STATE":
 
-
-
       return { session: await getLightweightSession() };
 
     case "START_RECORDING": {
-
-
-
-
-
 
       return await withSessionLock(async () => {
         const existing = await getSession();
@@ -914,8 +729,6 @@ async function handleMessage(message, sender) {
 
           await _finalizeSessionLocked(existing);
         }
-
-
 
         let tab;
         if (message.tabId) {
@@ -927,7 +740,6 @@ async function handleMessage(message, sender) {
           return { ok: false, error: "This page cannot be recorded by Chrome." };
         }
 
-
         const rechecked = await getSession();
         if (rechecked) {
           return { ok: false, error: "A recording is still being finalized. Please try again." };
@@ -937,9 +749,6 @@ async function handleMessage(message, sender) {
         const session = createSession(tab);
         session.excludedDomains = Array.isArray(message.excludedDomains) ? message.excludedDomains : [];
         await saveSession(session);
-
-
-
 
         const ack = await sendToTab(tab.id, {
           type: "RECORDER_START",
@@ -959,10 +768,6 @@ async function handleMessage(message, sender) {
 
       if (!message.tabId) return { ok: false, error: "No tab specified." };
 
-
-
-
-
       if (fullPageCaptureInProgress) return { ok: false, error: "A full-page capture is already in progress. Please wait for it to finish." };
       fullPageCaptureInProgress = true;
       const targetTab = await chrome.tabs.get(message.tabId).catch(() => null);
@@ -976,13 +781,6 @@ async function handleMessage(message, sender) {
       await chrome.windows.update(targetTab.windowId, { focused: true }).catch(() => {});
       await new Promise((r) => setTimeout(r, 300));
 
-
-
-
-
-
-
-
       let result;
       try {
         result = await captureFullPage(targetTab);
@@ -994,18 +792,16 @@ async function handleMessage(message, sender) {
         }
       }
 
-
       if (Array.isArray(result)) {
         return { ok: true, captures: result, nestedCaptures: [], truncated: false, captureError: null };
       }
+      const captureError = result.captureError || null;
       return {
-        ok: true,
+        ok: !captureError,
         captures: result.captures || [],
         nestedCaptures: result.nestedCaptures || [],
-
         truncated: result.truncated === true,
-
-        captureError: result.captureError || null
+        captureError
       };
     }
 
@@ -1015,7 +811,16 @@ async function handleMessage(message, sender) {
       return withSessionLock(async () => {
         const session = await getSession();
         if (!session) return { ok: false, error: "No active recording." };
-        session.status = message.type === "PAUSE_RECORDING" ? "paused" : "recording";
+        if (message.type === "PAUSE_RECORDING" && session.status === "recording") {
+          session.status = "paused";
+          session.pausedAt = Date.now();
+        } else if (message.type === "RESUME_RECORDING" && session.status === "paused") {
+          if (session.pausedAt) {
+            session.totalPausedMs = (session.totalPausedMs || 0) + (Date.now() - session.pausedAt);
+            session.pausedAt = 0;
+          }
+          session.status = "recording";
+        }
         await saveSession(session);
         const note = message.type === "PAUSE_RECORDING" ? "RECORDER_PAUSE" : "RECORDER_RESUME";
         for (const tabId of session.tabIds) {
@@ -1032,18 +837,8 @@ async function handleMessage(message, sender) {
 
     case "DISCARD_RECORDING": {
 
-
-
-
-
-
-
-
       for (const [, pending] of pendingClicks) {
         clearTimeout(pending.timer);
-
-
-
 
         try { pending.resolveRef({ ok: false, discarded: true }); } catch (_) {  }
       }
@@ -1070,29 +865,6 @@ async function handleMessage(message, sender) {
 
     case "GET_TUTORIALS_SUMMARY": {
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
       const summaries = await dbGetAllSummaries();
       return { tutorials: summaries };
     }
@@ -1104,7 +876,6 @@ async function handleMessage(message, sender) {
     }
 
     case "SAVE_TUTORIAL":
-
 
       if (message.tutorial) {
         try { await dbPut(normalizeTutorial(message.tutorial)); }
@@ -1139,8 +910,6 @@ async function handleMessage(message, sender) {
     case "DELETE_TUTORIALS": {
       const ids = Array.isArray(message.ids) ? message.ids : [];
 
-
-
       try {
         const deleted = await dbDeleteAll(ids);
         chrome.runtime.sendMessage({ type: "TUTORIALS_CHANGED" }).catch(() => {});
@@ -1171,28 +940,15 @@ chrome.tabs.onCreated.addListener(async (tab) => {
   try {
     const session = await getSession();
 
-
     if (!session || !tab.id) return;
 
-
-
     if (!tab.openerTabId || !session.tabIds.includes(tab.openerTabId)) return;
-
-
-
 
   const isNewWindow = tab.windowId != null && !session.windowIds.includes(tab.windowId);
   await addTabToSession(session, tab);
 
-
-
-
-
-
-
   await withSessionLock(async () => {
     const currentSession = await getSession();
-
 
     if (!currentSession || currentSession.id !== session.id) return;
 
@@ -1226,31 +982,18 @@ async function persistLastNavUrls() {
 try {
   chrome.storage.session.get("lastNavUrls", (result) => {
     if (result?.lastNavUrls && Array.isArray(result.lastNavUrls)) {
-      for (const [tabId, url] of result.lastNavUrls) lastNavUrlByTab.set(tabId, url); persistLastNavUrls();
+      for (const [tabId, url] of result.lastNavUrls) lastNavUrlByTab.set(tabId, url);
     }
   });
 } catch (_) {}
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
-
   try {
-
-
-
-
-
-
 
   await withSessionLock(async () => {
     const session = await getSession();
     if (!session || !session.tabIds.includes(tabId)) return;
-
-
-
-
-
-
 
     const pendingNavUrl = pendingNavUrls.get(tabId);
     if (changeInfo.url && changeInfo.status === "loading") {
@@ -1277,8 +1020,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     }
 
     if (changeInfo.status !== "complete") return;
-
-
 
     if (pendingNavUrl) {
       pendingNavUrls.delete(tabId);
@@ -1326,18 +1067,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
 async function captureFullPage(tab) {
 
-
-
-
-
-
-
-
-
-
-
-
-
   const captures = [];
   const nestedCaptures = [];
   let viewportHeight = 720;
@@ -1353,11 +1082,7 @@ async function captureFullPage(tab) {
     }
   } catch (e) {  }
 
-
-
-
   await sendToTab(tab.id, { type: "CAPTURE_SCROLL_START" }, null).catch(() => {});
-
 
   try {
     await chrome.scripting.executeScript({
@@ -1376,8 +1101,6 @@ async function captureFullPage(tab) {
     });
   } catch (e) {  }
 
-
-
   try {
     const [dhResult] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -1386,14 +1109,7 @@ async function captureFullPage(tab) {
     if (typeof dhResult?.result === "number") docHeight = dhResult.result;
   } catch (e) {  }
 
-
   await sendToTab(tab.id, { type: "HIDE_STATUS" }, 0).catch(() => {});
-
-
-
-
-
-
 
   await sendToTab(tab.id, {
     type: "PREPARE_CAPTURE",
@@ -1407,11 +1123,6 @@ async function captureFullPage(tab) {
   const fpSettings = await getSettings();
   await new Promise((r) => setTimeout(r, Math.max(50, fpSettings.captureDelay || 220)));
   await sendToTab(tab.id, { type: "REFRESH_MASKS" }, null).catch(() => {});
-
-
-
-
-
 
   try {
     await chrome.scripting.executeScript({
@@ -1450,38 +1161,13 @@ async function captureFullPage(tab) {
     });
   } catch (_) {  }
 
-
-
-
-
-
-
-
   await sendToTab(tab.id, { type: "HIDE_FIXED_ELEMENTS" }, null).catch(() => {});
 
-
-
-
   let truncated = false;
-
 
   try {
     const step = Math.max(100, Math.floor(viewportHeight * 0.7));
     let safetyCounter = 0;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     const MAX_CAPTURES = 200;
     const NO_PROGRESS_WAIT_MS = 800;
@@ -1494,13 +1180,6 @@ async function captureFullPage(tab) {
       try {
         const result = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
-
-
-
-
-
-
-
 
           func: (yVal) => {
             const html = document.documentElement;
@@ -1515,8 +1194,6 @@ async function captureFullPage(tab) {
         });
         if (typeof result?.[0]?.result === "number") actualY = result[0].result;
       } catch (e) { break; }
-
-
 
       if (actualY === lastScrollY) {
 
@@ -1540,7 +1217,6 @@ async function captureFullPage(tab) {
           noProgressCount++;
           if (noProgressCount >= NO_PROGRESS_THRESHOLD) break;
 
-
           lastScrollY = actualY;
           continue;
         }
@@ -1550,28 +1226,13 @@ async function captureFullPage(tab) {
       lastScrollY = actualY;
       await new Promise((r) => setTimeout(r, 350));
 
-
-
-
-
-
-
       await sendToTab(tab.id, { type: "REFRESH_MASKS" }, null).catch(() => {});
       const shot = await serializeTransaction(() => captureVisibleTab(tab, "png"));
-
-
-
-
-
 
       if (!shot.image) {
         return { captures, nestedCaptures: [], truncated: false, captureError: shot.error || "Screenshot capture failed during full-page capture." };
       }
       captures.push({ image: shot.image, scrollY: actualY, viewportHeight });
-
-
-
-
 
       try {
         const [dhResult] = await chrome.scripting.executeScript({
@@ -1584,15 +1245,6 @@ async function captureFullPage(tab) {
         }
       } catch (_) {  }
     }
-
-
-
-
-
-
-
-
-
 
     {
 
@@ -1635,12 +1287,7 @@ async function captureFullPage(tab) {
 
     await sendToTab(tab.id, { type: "RESTORE_FIXED_ELEMENTS" }, null).catch(() => {});
 
-
     await sendToTab(tab.id, { type: "CLEAR_CAPTURE" }, null).catch(() => {});
-
-
-
-
 
     const session = await getSession();
     if (session?.status === "recording") {
@@ -1648,25 +1295,7 @@ async function captureFullPage(tab) {
     }
   }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
   try {
-
-
 
     await sendToTab(tab.id, { type: "HIDE_STATUS" }, 0).catch(() => {});
 
@@ -1687,14 +1316,6 @@ async function captureFullPage(tab) {
       func: () => {
         const candidates = [];
         let counter = 0;
-
-
-
-
-
-
-
-
 
         const visit = (root, offsetX, offsetY, scaleX, scaleY) => {
           if (!root || !root.querySelectorAll) return;
@@ -1731,9 +1352,6 @@ async function captureFullPage(tab) {
                 if (doc) {
                   const iframeRect = el.getBoundingClientRect();
 
-
-
-
                   visit(doc, offsetX + scaleX * iframeRect.left, offsetY + scaleY * iframeRect.top, scaleX, scaleY);
                 }
               } catch (_) {  }
@@ -1751,20 +1369,10 @@ async function captureFullPage(tab) {
       const scrollerSequence = [];
       const nestedStep = Math.max(100, Math.floor(scroller.clientHeight * 0.7));
 
-
-
-
       let nestedMax = Math.min(20, Math.ceil(scroller.scrollHeight / nestedStep));
       try {
         for (let i = 0; i < nestedMax; i++) {
           const yTarget = i * nestedStep;
-
-
-
-
-
-
-
 
           const scrollResult = await chrome.scripting.executeScript({
             target: { tabId: tab.id },
@@ -1795,12 +1403,9 @@ async function captureFullPage(tab) {
           const actualNestedY = typeof scrollResult?.[0]?.result === "number" ? scrollResult[0].result : yTarget;
           await new Promise((r) => setTimeout(r, 250));
 
-
-
           await sendToTab(tab.id, { type: "REFRESH_MASKS" }, null).catch(() => {});
           const shot = await serializeTransaction(() => captureVisibleTab(tab, "png"));
           if (shot.image) scrollerSequence.push({ image: shot.image, scrollY: actualNestedY, viewportHeight: scroller.clientHeight });
-
 
           try {
             const [recheck] = await chrome.scripting.executeScript({
@@ -1888,9 +1493,6 @@ async function captureFullPage(tab) {
     }
   } catch (_) {  }
 
-
-
-
   for (const cleanupMsg of [
     { type: "RESTORE_FIXED_ELEMENTS" },
     { type: "CLEAR_CAPTURE" },
@@ -1898,7 +1500,6 @@ async function captureFullPage(tab) {
   ]) {
     const cleanupOk = await sendToTab(tab.id, cleanupMsg, null).catch(() => null);
     if (cleanupOk === null) {
-
 
       await new Promise((r) => setTimeout(r, 100));
       await sendToTab(tab.id, cleanupMsg, null).catch(() => {});
@@ -1910,12 +1511,7 @@ async function captureFullPage(tab) {
     await sendToTab(tab.id, { type: "SHOW_STATUS", count: sessionAfterNested.steps.length }, 0).catch(() => {});
   }
 
-
   await sendToTab(tab.id, { type: "CAPTURE_SCROLL_END" }, null).catch(() => {});
-
-
-
-
 
   return { captures, nestedCaptures, truncated, captureError: null };
 }
@@ -1925,11 +1521,7 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   try {
     if (pendingNewTabs.delete(tabId)) await persistPendingNewTabs();
 
-
     pendingNavUrls.delete(tabId);
-
-
-
 
     if (lastNavUrlByTab.delete(tabId)) await persistLastNavUrls();
 
@@ -1940,12 +1532,6 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
       await saveSession(session);
     });
   } catch (e) { console.warn("[BTR] onRemoved handler failed:", e); }
-});
-
-chrome.windows.onCreated?.addListener(async (_window) => {
-
-
-
 });
 
 async function persistPendingNewTabs() {
@@ -2006,8 +1592,6 @@ chrome.commands.onCommand.addListener(async (command) => {
   try {
     switch (command) {
       case "start-recording": {
-
-
 
         await withSessionLock(async () => {
           const existingKb = await getSession();
