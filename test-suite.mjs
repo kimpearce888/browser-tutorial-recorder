@@ -438,6 +438,142 @@ section("integration — full recording sequence");
 }
 
 /* ------------------------------------------------------------------ */
+section("integration — background ⇄ content message bus (loop regression)");
+
+{
+  const CAP = 300;
+  const bus = { count: 0, overflow: false, log: [] };
+  const framesByTab = new Map();
+  const bgMessageHandlers = [];
+
+  function countMessage(kind, direction) {
+    bus.count++;
+    bus.log.push(`${direction}:${kind}`);
+    if (bus.count > CAP) bus.overflow = true;
+  }
+
+  function deliverToBackground(message, sender) {
+    countMessage(message && message.type, "c2bg");
+    if (bus.overflow) return;
+    for (const h of [...bgMessageHandlers]) h(message, sender, () => {});
+  }
+
+  function deliverToFrames(tabId, message, frameId) {
+    const frames = framesByTab.get(tabId) || [];
+    for (const f of frames) {
+      if (typeof frameId === "number" && f.frameId !== frameId) continue;
+      countMessage(message && message.type, "bg2c");
+      if (bus.overflow) return;
+      for (const h of [...f.handlers]) h(message, { tab: { id: tabId, windowId: 1 } }, () => {});
+    }
+  }
+
+  const TAB1 = { id: 1, windowId: 1, url: "https://example.com/app", title: "Example App", active: true };
+  const tabsMap = new Map([[1, TAB1]]);
+  const store = { local: new Map(), session: new Map() };
+  const mkStorage = (m) => ({
+    get: async (keys) => {
+      const out = {};
+      for (const k of (Array.isArray(keys) ? keys : [keys])) if (m.has(k)) out[k] = m.get(k);
+      return out;
+    },
+    set: async (obj) => { for (const [k, v] of Object.entries(obj)) m.set(k, v); },
+    remove: async (keys) => { for (const k of (Array.isArray(keys) ? keys : [keys])) m.delete(k); }
+  });
+
+  globalThis.chrome = {
+    runtime: {
+      id: "btr-test-ext",
+      onMessage: { addListener: (fn) => bgMessageHandlers.push(fn) }
+    },
+    storage: {
+      local: mkStorage(store.local),
+      session: mkStorage(store.session),
+      onChanged: { addListener: () => {} }
+    },
+    action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
+    scripting: { executeScript: async () => [{ result: null }] },
+    commands: { onCommand: { addListener: () => {} } },
+    tabs: {
+      query: async (q) => (q && q.active ? [TAB1] : [...tabsMap.values()]),
+      get: async (id) => tabsMap.get(id) || null,
+      create: async (o) => ({ id: 99, ...o }),
+      update: async () => ({}),
+      remove: async () => {},
+      sendMessage: async (tabId, message, opts) => { deliverToFrames(tabId, message, opts && opts.frameId); },
+      captureVisibleTab: async () => "data:image/png;base64,MOCKSHOT",
+      onUpdated: { addListener: () => {} },
+      onActivated: { addListener: () => {} },
+      onCreated: { addListener: () => {} },
+      onRemoved: { addListener: () => {} }
+    }
+  };
+
+  await import("./background.js");
+  assert(bgMessageHandlers.length === 1, "background registers its message handler");
+
+  const contentSrc = readFileSync(new URL("./content.js", import.meta.url), "utf8");
+
+  function makeFrame(frameId, url) {
+    const dom = new JSDOM(`<!DOCTYPE html><html><body><input type="password" name="password"><button id="b">Go</button></body></html>`, { url, runScripts: "outside-only" });
+    const { window } = dom;
+    if (!window.CSS) window.CSS = {};
+    if (!window.CSS.escape) {
+      window.CSS.escape = (s) => String(s).replace(/[^a-zA-Z0-9_\-\u0080-\uffff]/g, (c) => "\\" + c);
+    }
+    const handlers = [];
+    window.chrome = {
+      runtime: {
+        sendMessage: (msg) => { deliverToBackground(msg, { tab: { id: 1, windowId: 1 }, frameId, url }); return Promise.resolve(); },
+        onMessage: { addListener: (fn) => handlers.push(fn) }
+      }
+    };
+    window.eval(contentSrc);
+    const entry = { frameId, window, handlers, dom };
+    framesByTab.set(1, [...(framesByTab.get(1) || []), entry]);
+    return entry;
+  }
+
+  const top = makeFrame(0, "https://example.com/app");
+  const sub = makeFrame(1, "https://cdn.example.com/embed");
+
+  const startRes = await new Promise((resolve) => {
+    bgMessageHandlers[0]({ type: "START_RECORDING" }, { id: "btr-test-ext" }, resolve);
+  });
+  assert(startRes && startRes.ok === true, "START_RECORDING responds ok over the bus");
+
+  await new Promise((r) => setTimeout(r, 400));
+  const countA = bus.count;
+  await new Promise((r) => setTimeout(r, 400));
+  const countB = bus.count;
+
+  assert(bus.overflow === false, "message bus never overflows (no hello/attach loop)");
+  assert(bus.count < 60, `message count bounded after start (${bus.count} messages)`);
+  assert(countA === countB, `messages quiesce after start (${countA} → ${countB})`);
+
+  assert(top.window.__btrTest.getState().attached === true, "top frame attached after start");
+  assert(sub.window.__btrTest.getState().attached === true, "sub frame attached after start");
+  assert(top.window.__btrTest.getState().paused === false, "top frame unpaused on attach");
+
+  const helloCount = bus.log.filter((l) => l === "c2bg:CS_HELLO").length;
+  const hooksBefore = top.window.__btrTest;
+  top.window.eval(contentSrc);
+  assert(top.window.__btrTest === hooksBefore, "double injection is a no-op (idempotent guard)");
+  assert(bus.log.filter((l) => l === "c2bg:CS_HELLO").length === helloCount, "double injection sends no second hello");
+
+  const recBefore = bus.log.filter((l) => l === "c2bg:REC_EVENT").length;
+  top.window.document.getElementById("b").click();
+  await new Promise((r) => setTimeout(r, 1200));
+  const recAfter = bus.log.filter((l) => l === "c2bg:REC_EVENT").length;
+  assert(recAfter === recBefore + 1, `single click produces exactly one REC_EVENT (${recAfter - recBefore})`);
+  assert(bus.overflow === false, "bus still healthy after event processing");
+
+  top.dom.window.close();
+  sub.dom.window.close();
+  delete globalThis.chrome;
+}
+
+/* ------------------------------------------------------------------ */
 
 console.log("  → " + passed + " passed\n");
 console.log("═══════════════════════════════════════");

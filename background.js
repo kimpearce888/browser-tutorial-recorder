@@ -41,7 +41,7 @@ function scheduleDraftFlush(immediate = false) {
   if (!recorder.isActive()) return;
   if (immediate) { doFlushDraft(); return; }
   clearTimeout(flushTimer);
-  flushTimer = setTimeout(doFlushDraft, 400);
+  flushTimer = setTimeout(doFlushDraft, 3000);
 }
 
 async function doFlushDraft() {
@@ -99,15 +99,16 @@ async function injectContentScript(tabId) {
   }
 }
 
-async function sendToTab(tabId, message) {
-  try { await chrome.tabs.sendMessage(tabId, message); return true; }
+async function sendToTab(tabId, message, options) {
+  try { await chrome.tabs.sendMessage(tabId, message, options); return true; }
   catch { return false; }
 }
 
-async function attachToTab(tabId) {
+async function attachToTab(tabId, frameId = null) {
   const settings = await getSettings();
   const ui = recorder.uiState();
   const session = ui.session;
+  const options = typeof frameId === "number" ? { frameId } : undefined;
   await sendToTab(tabId, {
     type: "ATTACH_RECORDER",
     recording: Boolean(session),
@@ -115,7 +116,7 @@ async function attachToTab(tabId) {
     excludedDomains: session ? session.excludedDomains || [] : [],
     sensitivePatterns: settings.sensitivePatterns,
     autoPauseIdleSec: settings.autoPauseIdleSec
-  });
+  }, options);
   attachedTabIds.add(tabId);
 }
 
@@ -258,7 +259,7 @@ async function handleContentMessage(message, sender) {
     case "CS_HELLO": {
       if (recorder.isActive() && tabId != null) {
         recorder.addTab({ id: tabId, windowId: senderInfo.windowId });
-        await attachToTab(tabId);
+        await attachToTab(tabId, senderInfo.frameId);
       }
       break;
     }
@@ -292,7 +293,9 @@ async function captureFullPage(tabId) {
       })
     });
     cssWidth = vp.w; cssHeight = vp.h; dpr = vp.dpr || 1;
-    const maxShots = 40;
+    const MAX_CANVAS_HEIGHT = 12000;
+    const MAX_CANVAS_WIDTH = 3840;
+    const maxShots = Math.max(1, Math.min(40, Math.floor(MAX_CANVAS_HEIGHT / Math.max(1, cssHeight))));
     await chrome.scripting.executeScript({
       target: { tabId },
       func: () => {
@@ -332,7 +335,9 @@ async function captureFullPage(tabId) {
 
     const images = await Promise.all(captures.map((c) => createImageBitmapFromUrl(c.dataUrl)));
     const totalHeight = captures[captures.length - 1].y + cssHeight;
-    const canvas = new OffscreenCanvas(cssWidth, Math.min(totalHeight, cssHeight * maxShots));
+    const canvasWidth = Math.min(cssWidth, MAX_CANVAS_WIDTH);
+    const canvasHeight = Math.min(totalHeight, cssHeight * maxShots, MAX_CANVAS_HEIGHT);
+    const canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
     const ctx = canvas.getContext("2d");
     captures.forEach((c, i) => {
       ctx.drawImage(images[i], 0, c.y - captures[0].y, cssWidth, cssHeight);
@@ -341,8 +346,8 @@ async function captureFullPage(tabId) {
     const dataUrl = await blobToDataUrl(blob);
     return {
       image: dataUrl,
-      width: cssWidth,
-      height: Math.min(totalHeight, cssHeight * maxShots),
+      width: canvasWidth,
+      height: canvasHeight,
       dpr
     };
   } finally {

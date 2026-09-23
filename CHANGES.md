@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.0.1 — 2026-09-24
+
+### Fixed — Chrome hang + crash on Start Recording
+
+Reported live: clicking Start Recording pegged the CPU, the whole browser hung, and Chrome then crashed. Root cause was a message ping-pong loop between the service worker and content scripts, compounded by double injection.
+
+- **Infinite attach handshake eliminated** — content scripts answered every `ATTACH_RECORDER` with a new `CS_HELLO`, and the background answered every `CS_HELLO` by broadcasting `ATTACH_RECORDER` to all frames of the tab again. Thousands of messages per second (each also re-reading settings storage) starved the browser process. The background now replies with a frame-targeted attach (`sendMessage` with `frameId`) and content scripts say hello exactly once per document.
+- **Double injection guarded** — `content.js` is both a static `content_scripts` entry (all frames, `document_start`) and programmatically re-injected on start/navigation. Chrome runs both copies, doubling every listener and heartbeat. An idempotency guard now makes re-injection a no-op, so a single click can no longer produce duplicate steps.
+- **Mask loop defused** — the sensitive-field mask refresh ran a full-DOM scan on every mutation frame; it is now throttled (≥1.2 s gap), the interval relaxed to 1.5 s, and redundant style writes skipped via a geometry key.
+- **Draft flush relaxed** — debounced 400 ms → 3 s to cut IndexedDB churn on long recordings.
+- **Full-page capture capped** — the stitch canvas is now bounded (≤ 12000 px tall, ≤ 3840 px wide) so very long pages can no longer allocate a multi-gigabyte `OffscreenCanvas`.
+
+**Regression proof:** a new message-bus integration test wires the real `background.js` and the real `content.js` together over a capped bus. Old code floods past 300 messages and overflows; fixed code exchanges 6 messages and goes quiescent. The same test asserts the double-injection guard and single-event capture.
+
+**Tests: 145/145 pass.**
+
 ## v2.0.0 — 2026-09-24
 
 ### Complete rewrite — built fresh for reliability

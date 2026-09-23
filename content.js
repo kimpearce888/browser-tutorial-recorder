@@ -2,6 +2,8 @@
   "use strict";
 
   if (!/^https?:/i.test(location.protocol)) return;
+  if (self.__btrActive) return;
+  self.__btrActive = true;
 
   const IS_TOP = window.top === window;
   const FRAME_NONCE = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
@@ -154,6 +156,7 @@
   }
 
   function refreshMasks() {
+    lastMaskRun = Date.now();
     if (!attached) { clearMasks(); return; }
     const container = ensureMaskContainer();
     const fields = collectSensitiveFields();
@@ -169,13 +172,17 @@
         container.appendChild(mask);
         masks.set(el, mask);
       }
-      const m = mask.style;
       const pad = 3;
-      m.left = `${Math.max(0, rect.left - pad)}px`;
-      m.top = `${Math.max(0, rect.top - pad)}px`;
-      m.width = `${rect.width + pad * 2}px`;
-      m.height = `${rect.height + pad * 2}px`;
-      m.display = "block";
+      const geom = `${Math.max(0, rect.left - pad)},${Math.max(0, rect.top - pad)},${rect.width + pad * 2},${rect.height + pad * 2}`;
+      if (mask.dataset.btrGeom !== geom) {
+        mask.dataset.btrGeom = geom;
+        const m = mask.style;
+        m.left = `${Math.max(0, rect.left - pad)}px`;
+        m.top = `${Math.max(0, rect.top - pad)}px`;
+        m.width = `${rect.width + pad * 2}px`;
+        m.height = `${rect.height + pad * 2}px`;
+        m.display = "block";
+      }
     }
     for (const [el, mask] of masks) {
       if (!seen.has(el)) {
@@ -200,22 +207,30 @@
 
   function clearMasks() {
     clearTimeout(maskScanTimer);
+    clearTimeout(maskCatchup);
+    maskCatchup = null;
     for (const [, mask] of masks) mask.remove();
     masks.clear();
     const container = document.getElementById(MASK_CONTAINER_ID);
     if (container) container.remove();
   }
 
+  const MASK_MIN_GAP_MS = 1200;
+  let lastMaskRun = 0;
+  let maskCatchup = null;
+
   function scheduleMaskWork() {
     if (!attached) return;
-    cancelAnimationFrame(scheduleMaskWork._raf);
-    scheduleMaskWork._raf = requestAnimationFrame(refreshMasks);
+    const gap = Date.now() - lastMaskRun;
+    if (gap >= MASK_MIN_GAP_MS) { refreshMasks(); return; }
+    if (maskCatchup) return;
+    maskCatchup = setTimeout(() => { maskCatchup = null; refreshMasks(); }, MASK_MIN_GAP_MS - gap);
   }
 
   function startMaskLoop() {
     clearInterval(maskScanTimer);
     refreshMasks();
-    maskScanTimer = setInterval(refreshMasks, 600);
+    maskScanTimer = setInterval(refreshMasks, 1500);
   }
 
   function cumulativeOffset() {
@@ -491,7 +506,6 @@
       sensitivePatterns = Array.isArray(message.sensitivePatterns) ? message.sensitivePatterns : [];
       autoPauseIdleSec = Number(message.autoPauseIdleSec) || 0;
       if (attached) startMaskLoop(); else clearMasks();
-      if (attached) hello();
     } else if (message.type === "DETACH_RECORDER") {
       attached = false;
       paused = false;
