@@ -1,6 +1,3 @@
-// Settings store: wraps chrome.storage.local with typed defaults, pub/sub,
-// theme application, and keyboard shortcut matching.
-
 const STORAGE_KEY = "settings";
 
 const DEFAULT_SETTINGS = {
@@ -84,14 +81,10 @@ export async function getSettings() {
   return load();
 }
 
-// F9 fix: serialize settings writes through a queue. The old saveSettings()
-// had a read-modify-write race — multiple rapid calls (e.g. dragging a slider)
-// could all read the same stale cache before earlier writes completed, then
-// each write would overwrite the others' changes.
 let settingsWriteQueue = Promise.resolve();
 function serializeSettingsWrite(fn) {
   const result = settingsWriteQueue.then(fn, fn);
-  // Swallow rejections so one failed write doesn't break the queue for future writes.
+
   settingsWriteQueue = result.then(() => undefined, () => undefined);
   return result;
 }
@@ -133,15 +126,15 @@ export function eventToKey(event) {
     if (event.shiftKey) parts.push("shift");
     return parts.join("+");
   }
-  // H22: shift+a letter produces event.key="A" (uppercase). We lowercased it
-  // above, so we need to check if shift was held and add it explicitly.
-  // Without this, binding "shift+a" was impossible because the shift was lost.
+
+
+
   if (event.shiftKey && key.length === 1 && /[a-z0-9]/.test(key)) {
     parts.push("shift");
   }
-  // Non-letter keys (punctuation, etc.) — these come as their symbol already
-  // (e.g. "?", "/"). Shift state is implicit in the symbol, so we don't add
-  // "shift" for those.
+
+
+
   parts.push(key);
   return parts.join("+");
 }
@@ -173,22 +166,22 @@ export async function initTheme() {
     const settings = await getSettings();
     applyTheme(settings.theme);
     applyHighContrast(settings.highContrast);
-    // B14 fix: always register the matchMedia listener, regardless of the
-    // current theme. The old code only registered it when `theme === "system"`
-    // at init time — so if the user later switched from "dark" to "system",
-    // the OS theme change listener was never attached and OS Light↔Dark
-    // transitions weren't observed until page reload. The listener itself
-    // checks `(cache || {}).theme === "system"` before applying, so it's a
-    // no-op when the user has explicitly chosen light or dark.
+
+
+
+
+
+
+
     if (!_mediaListenerRegistered) {
       _mediaListenerRegistered = true;
       window.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener?.("change", () => {
         if ((cache || {}).theme === "system") applyTheme("system");
       });
     }
-    // v1.0.5: use a separate flag for subscribe() — the single-flag approach
-    // (introduced in v1.0.3) meant subscribe() was skipped whenever theme
-    // was "system" (the default), breaking cross-tab theme/high-contrast sync.
+
+
+
     if (!_subscribed) {
       _subscribed = true;
       subscribe((s) => { applyTheme(s.theme); applyHighContrast(s.highContrast); });

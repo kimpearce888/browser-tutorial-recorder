@@ -10,15 +10,13 @@
 
 body {
   margin: 0;
-  /* v1.0.4 #3: removed min-width: 1050px — was forcing horizontal scroll
-     on viewports below 1050px, contradicting the responsive breakpoint. */
+
+
 }
 
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 .hidden { display: none !important; }
-
-/* Top bar --------------------------------------------------------------- */
 
 .topbar {
   height: 68px;
@@ -85,8 +83,6 @@ button { cursor: pointer; }
 .toolbar .soft { background: var(--bg-canvas); color: var(--text); }
 .toolbar .accent { background: var(--accent); color: #fff; padding: 9px 14px; }
 
-/* Editor shell --------------------------------------------------------- */
-
 .editor-shell {
   height: calc(100vh - 68px);
   display: grid;
@@ -128,8 +124,6 @@ button { cursor: pointer; }
   line-height: 22px;
 }
 
-/* Step list ------------------------------------------------------------ */
-
 .step-list { overflow: auto; flex: 1; padding-right: 2px; }
 
 .step-card {
@@ -142,13 +136,8 @@ button { cursor: pointer; }
   cursor: pointer;
 }
 
-/* Focus-visible (NH10 global) — keyboard users need visible focus indicators.
-   Applied to all interactive elements via a global rule at the bottom of this file. */
-
 .step-card:hover { background: var(--bg-hover); }
 .step-card.selected { border-color: var(--border-accent); background: var(--bg-accent-soft); }
-/* F21 fix: .step-card.multi-selected and .step-select are dead CSS — multi-select
-   was removed in P1-9 and no <input class="step-select"> exists in the HTML. */
 
 .step-number {
   width: 23px; height: 23px;
@@ -162,8 +151,6 @@ button { cursor: pointer; }
 }
 
 .selected .step-number { background: var(--accent); color: #fff; }
-
-/* F21 fix: .step-select was dead CSS (no matching HTML element). Removed. */
 
 .step-thumb {
   width: 55px; height: 39px;
@@ -208,8 +195,6 @@ button { cursor: pointer; }
 .side-note strong { display: block; color: var(--text-muted); font-size: 10px; }
 .side-note p { font-size: 9px; line-height: 1.5; margin: 4px 0 0; }
 
-/* Canvas --------------------------------------------------------------- */
-
 .canvas-panel { display: flex; flex-direction: column; min-width: 0; }
 
 .canvas-head {
@@ -237,8 +222,8 @@ button { cursor: pointer; }
   box-shadow: 0 20px 50px var(--shadow);
   max-width: 100%;
   max-height: 100%;
-  /* F25 fix: was min-width: 400px, which forced horizontal scroll on
-     viewports below ~620px. Use min() so it scales down on small screens. */
+
+
   min-width: min(400px, 100%);
   aspect-ratio: 16/9;
   overflow: visible;
@@ -277,8 +262,6 @@ button { cursor: pointer; }
   overflow: visible;
 }
 
-/* Annotations --------------------------------------------------------- */
-
 .annotation {
   position: absolute;
   cursor: pointer;
@@ -291,9 +274,7 @@ button { cursor: pointer; }
 .annotation.rectangle { border: 3px solid #4779f4; }
 .annotation.circle { border: 3px solid #8b5cf6; border-radius: 50%; }
 .annotation.blur { background: #25314499; }
-/* NH8 fix: was hardcoded `#202b40` (the LIGHT-mode --text value) which made
-   redaction boxes nearly invisible on the dark-mode --bg-canvas (#141822).
-   Using var(--text) keeps the contrast correct in both themes. */
+
 .annotation.redaction { background: var(--text); }
 .annotation.spotlight { box-shadow: 0 0 0 9999px #172238c7; }
 .annotation.text {
@@ -331,8 +312,6 @@ button { cursor: pointer; }
   border-radius: 3px;
   padding: 1px 4px;
 }
-
-/* Properties panel ---------------------------------------------------- */
 
 .properties-scroll { padding: 24px 19px; overflow: auto; height: 100%; }
 .property-title { padding: 0 0 23px; }
@@ -475,8 +454,6 @@ button { cursor: pointer; }
 .privacy-callout strong { font-size: 10px; color: var(--text); }
 .privacy-callout p { font-size: 9px; line-height: 1.5; margin: 4px 0; }
 
-/* Transform handles --------------------------------------------------- */
-
 .annotation-controls {
   position: absolute;
   z-index: 20;
@@ -543,11 +520,7 @@ button { cursor: pointer; }
 }
 
 .control-duplicate { right: 16px; top: -45px; background: var(--bg-elevated); color: var(--text); border: 1px solid var(--accent); }
-/* NC3 fix: previously `background: var(--text); color: #fff`. In dark mode
-   --text is near-white (#e8ecf4), so the button rendered as a near-white
-   circle with white text — the × icon was completely invisible. Using
-   var(--bg-elevated) for the bg and var(--text) for the color (same as
-   .control-duplicate) keeps it visible in both themes. */
+
 .control-delete { right: -12px; top: -45px; background: var(--bg-elevated); color: var(--text); border: 1px solid var(--accent); }
 
 .arrow-handle {
@@ -560,8 +533,6 @@ button { cursor: pointer; }
 }
 
 .arrow-start, .arrow-end { transform: translate(-50%, -50%); }
-
-/* Drawing preview ---------------------------------------------------- */
 
 #annotationLayer[data-drawing="true"]::after {
   content: "";
@@ -594,11 +565,8 @@ button { cursor: pointer; }
   color: var(--danger-text);
 }
 
-/* Crop mode cursor */
 .canvas-wrap.crop-mode { cursor: crosshair; }
 .canvas-wrap.crop-mode #annotationLayer { cursor: crosshair; }
-
-/* Export dialog ------------------------------------------------------ */
 
 .dialog-card {
   border: 0;
@@ -612,10 +580,7 @@ button { cursor: pointer; }
 }
 
 .dialog-card::backdrop { background: var(--shadow-strong); }
-/* F-fix: ::backdrop only applies to the top-layer element (the <dialog> itself),
-   not its descendants. The .dialog-card is a <div> inside the <dialog>, so this
-   rule is a no-op. Add the rule to the actual <dialog> element via the
-   `dialog[open]` selector as well. */
+
 dialog[open] { border: 0; background: transparent; padding: 0; color: inherit; }
 dialog[open]::backdrop { background: var(--shadow-strong); }
 
@@ -650,7 +615,6 @@ dialog[open]::backdrop { background: var(--shadow-strong); }
 .export-grid strong { display: block; font-size: 11px; color: var(--text); }
 .export-grid span { display: block; margin-top: 4px; color: var(--text-muted); font-size: 9px; }
 
-/* Shortcut cheat-sheet overlay ------------------------------------------- */
 .shortcut-overlay {
   position: fixed;
   inset: 0;
@@ -684,7 +648,6 @@ dialog[open]::backdrop { background: var(--shadow-strong); }
 .shortcut-card td { padding: 6px 8px; border-bottom: 1px solid var(--border-soft); }
 .shortcut-card kbd { background: var(--bg-canvas); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font: 600 10px ui-monospace, monospace; }
 
-/* H2: Preset library */
 .preset-library { margin-top: 12px; }
 .preset-list { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto; }
 .preset-empty { color: var(--text-subtle); font-size: 11px; padding: 8px 4px; }
@@ -703,10 +666,8 @@ dialog[open]::backdrop { background: var(--shadow-strong); }
 .preset-apply:hover { background: var(--bg-accent-soft); color: var(--accent); }
 .preset-delete:hover { background: var(--danger-bg); color: var(--danger-text); }
 
-/* H3: Tutorial description field (smaller than step description) */
 #tutorialDescription { font-size: 12px; resize: vertical; min-height: 36px; }
 
-/* B22: Fit-to-viewport mode constrains the canvas to the available stage height */
 .canvas-wrap.fit-to-viewport {
   max-height: calc(100vh - 200px);
   width: auto !important;
@@ -718,7 +679,6 @@ dialog[open]::backdrop { background: var(--shadow-strong); }
   object-fit: contain;
 }
 
-/* v1.0.3: responsive breakpoint — collapse properties panel below 1100px */
 @media (max-width: 1099px) {
   .editor-shell {
     grid-template-columns: 220px 1fr !important;
@@ -749,7 +709,6 @@ dialog[open]::backdrop { background: var(--shadow-strong); }
   .properties-toggle { display: none !important; }
 }
 
-/* v1.0.4 #2: properties-toggle button (only visible below 1100px) */
 .properties-toggle {
   display: none;
   position: fixed;
@@ -770,7 +729,6 @@ dialog[open]::backdrop { background: var(--shadow-strong); }
 .properties-toggle:hover { transform: scale(1.05); }
 .properties-toggle:active { transform: scale(0.95); }
 
-/* v1.2.1 #3: status toggle button */
 .status-toggle {
   border: 1px solid var(--border);
   background: var(--bg-elevated);
@@ -784,18 +742,12 @@ dialog[open]::backdrop { background: var(--shadow-strong); }
 .status-toggle:hover { border-color: var(--border-accent); color: var(--accent); }
 .status-toggle.is-ready { color: var(--success, #1c9a62); border-color: var(--success, #1c9a62); }
 
-/* NH10 fix: global focus-visible rule for keyboard accessibility.
-   Without this, keyboard users have no visible focus indicator on any
-   button, link, card, or tab — a WCAG 2.4.7 (Focus Visible) violation. */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 3px;
 }
 
-/* NH10 fix: respect prefers-reduced-motion. The pulse animation on the
-   recording dot and toast animations should not run for vestibular-sensitive
-   users. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

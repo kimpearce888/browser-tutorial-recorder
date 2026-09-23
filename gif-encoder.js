@@ -1,4 +1,3 @@
-// GIF89a encoder with LZW compression and fast uniform color quantization.
 const R_STEPS = 6, G_STEPS = 7, B_STEPS = 6;
 const PALETTE = [];
 for (let r = 0; r < R_STEPS; r++)
@@ -42,14 +41,14 @@ function lzwEncode(indices, minCodeSize) {
       writer.write(dict.get(prefix), codeSize);
       if (nextCode < 4096) {
         dict.set(key, nextCode); nextCode++;
-        // H31 fix: use > not >=. The code just assigned (nextCode-1) fits in
-        // the current codeSize. The NEXT code (nextCode) may not. With >=,
-        // codeSize increments when nextCode == 1<<codeSize, but the just-
-        // assigned code (1<<codeSize - 1) hasn't been output yet — it would
-        // be written at the new (larger) codeSize, but the decoder expects it
-        // at the old codeSize. Using > means codeSize increments one code later,
-        // so the just-assigned code is output at the correct (old) codeSize.
-        // This was verified by an independent GIF decoder round-trip test.
+
+
+
+
+
+
+
+
         if (nextCode > (1 << codeSize) && codeSize < 12) codeSize++;
       } else {
         writer.write(clearCode, codeSize);
@@ -65,14 +64,12 @@ function lzwEncode(indices, minCodeSize) {
   return writer.getBytes();
 }
 
-// M6: Use Uint8Array-backed BitWriter for ~10-50x faster encoding than
-// pushing byte-by-byte to a plain JS array.
 class BitWriter {
   constructor(initialSize = 65536) {
     this.buf = new Uint8Array(initialSize);
-    this.pos = 0;        // byte index
-    this.current = 0;    // current byte being built
-    this.bitsUsed = 0;   // bits written to current byte
+    this.pos = 0;
+    this.current = 0;
+    this.bitsUsed = 0;
   }
   ensure(extra) {
     if (this.pos + extra + 4 > this.buf.length) {
@@ -101,9 +98,9 @@ class BitWriter {
 }
 
 function subBlocks(bytes) {
-  // M6: build directly into a Uint8Array. Pre-compute the size first so we
-  // only allocate once.
-  let total = 1; // trailing 0
+
+
+  let total = 1;
   for (let i = 0; i < bytes.length; i += 255) {
     total += 1 + Math.min(255, bytes.length - i);
   }
@@ -123,23 +120,23 @@ function u16le(value) { return [value & 0xff, (value >> 8) & 0xff]; }
 
 function buildGif(frames, options = {}) {
   const loop = options.loop !== false;
-  // P1-25 fix: GIF dimensions are 16-bit — clamp to 65535 max
+
   const MAX_GIF_DIM = 65535;
   let width = Math.max(...frames.map((f) => f.width));
   let height = Math.max(...frames.map((f) => f.height));
-  // Scale down if any dimension exceeds the limit
+
   const scaleW = width > MAX_GIF_DIM ? MAX_GIF_DIM / width : 1;
   const scaleH = height > MAX_GIF_DIM ? MAX_GIF_DIM / height : 1;
   const scale = Math.min(scaleW, scaleH);
   if (scale < 1) {
     const newWidth = Math.round(width * scale);
     const newHeight = Math.round(height * scale);
-    // P2-22 fix: actually resize the RGBA data, not just the dimension fields
+
     frames = frames.map(f => {
       const fw = Math.round(f.width * scale);
       const fh = Math.round(f.height * scale);
       const newRgba = new Uint8Array(fw * fh * 4);
-      // Nearest-neighbor downscale
+
       for (let y = 0; y < fh; y++) {
         for (let x = 0; x < fw; x++) {
           const srcX = Math.floor(x / scale);
@@ -157,13 +154,13 @@ function buildGif(frames, options = {}) {
     width = newWidth;
     height = newHeight;
   }
-  // Pre-allocate generously (header + palette + frames).
-  // Each frame needs: 768 bytes for its own local color table + LZW data
-  // (worst case ~1 byte/pixel for noisy/high-detail screenshots).
-  // Add 768 per frame to the estimate so the buffer rarely needs to grow.
+
+
+
+
   const estimated = 32 + 768 + frames.length * (width * height + 768 + 64);
-  // v1.0.2 #1: MUST be `let` — growIfNeeded reassigns it. Was `const`,
-  // which threw "Assignment to constant variable" in strict mode (ES modules).
+
+
   let bytes = new Uint8Array(Math.max(estimated, 1024));
   let pos = 0;
   const push = (...vals) => { for (const v of vals) bytes[pos++] = v; };
@@ -199,7 +196,7 @@ function buildGif(frames, options = {}) {
     push(0);
     push(0x2c, ...u16le(0), ...u16le(0), ...u16le(frame.width), ...u16le(frame.height));
     push(0x87);
-    // Local color table (256 entries × 3 bytes).
+
     growIfNeeded(768);
     for (let i = 0; i < 256; i++) {
       bytes[pos++] = PALETTE[i][0];

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Browser Tutorial Recorder",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Record browser actions and turn them into polished, privacy-safe step-by-step tutorials.",
   "action": {
     "default_title": "Browser Tutorial Recorder",

@@ -2,8 +2,6 @@ import { escapeHtml, dbGet, normalizeTutorial } from "./shared.js";
 import { annotatedDataUrl } from "./exporter.js";
 import { initTheme } from "./settings-store.js";
 
-// H20: render a user-visible error page instead of a blank screen if the
-// print-export pipeline fails at any point.
 function showError(message) {
   const el = document.getElementById("content");
   if (!el) return;
@@ -13,21 +11,21 @@ function showError(message) {
 
 async function render() {
   try {
-    // v1.0.9: fetch only the one tutorial we need via dbGet(id).
-    // P1 v1.6.0 fix: removed the dbGetAll() fallback that loaded the entire
-    // library just to find the "most recent" tutorial when no id was provided.
-    // The exporter always opens print-export.html WITH an id, so the no-id
-    // case is an error (user manually navigated here). Show an error instead
-    // of loading every tutorial's screenshots into memory.
+
+
+
+
+
+
     const id = new URLSearchParams(location.search).get("id");
     if (!id) {
       showError("No tutorial specified. Open this page from the editor's Export menu.");
       return;
     }
-    // F4 fix: normalize the tutorial on load so malformed records don't crash
-    // the print-export pipeline (which expects sanitized annotation fields).
-    // B13 fix: null-check BEFORE normalizeTutorial — normalizeTutorial(null)
-    // throws, so the old code's `if (!tutorial)` branch was unreachable.
+
+
+
+
     const raw = await dbGet(id);
     const tutorial = raw ? normalizeTutorial(raw) : null;
     if (!tutorial) {
@@ -64,9 +62,9 @@ async function render() {
       </div>`);
     }
     document.getElementById("content").innerHTML = html.join("\n");
-    // Wait for all images to finish loading before opening the print dialog
-    // (H8). Previously this used a fixed 1-second timeout which broke for
-    // large tutorials or slow image decoding.
+
+
+
     const imgs = [...document.querySelectorAll("#content img")];
     await Promise.all(imgs.map((img) => {
       if (img.complete && img.naturalWidth) return Promise.resolve();
@@ -75,15 +73,15 @@ async function render() {
         img.addEventListener("error", resolve, { once: true });
       });
     }));
-    // Small extra delay so the browser has time to lay out the loaded images.
+
     await new Promise((r) => setTimeout(r, 100));
 
-    // H27: show a "Ready to print" button instead of auto-printing. The user
-    // can review the layout and click to open the print dialog when ready.
+
+
     const printBar = document.createElement("div");
-    // H14 fix: add a "print-bar" class so print-export.css's @media print rule
-    // can hide it (in case the user uses Ctrl+P / Cmd+P instead of the button,
-    // which would otherwise leave the fixed-position bar visible on every page).
+
+
+
     printBar.className = "print-bar";
     printBar.style.cssText = "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;background:#1b2333;color:#fff;border-radius:12px;padding:14px 24px;display:flex;gap:16px;align-items:center;box-shadow:0 8px 32px rgba(0,0,0,.3);font:14px system-ui";
     printBar.innerHTML = `
@@ -96,8 +94,8 @@ async function render() {
       printBar.remove();
       window.print();
     });
-    // P1 fix: removed the auto-print timer entirely. The button should be
-    // the only print action — any timer can surprise the user.
+
+
   } catch (error) {
     showError(error?.message || String(error));
   }

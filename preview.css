@@ -11,8 +11,6 @@ body { margin: 0; }
 button { font: inherit; cursor: pointer; }
 .hidden { display: none !important; }
 
-/* Header --------------------------------------------------------------- */
-
 header {
   height: 70px;
   background: var(--bg-elevated);
@@ -50,8 +48,6 @@ header a { color: var(--text-muted); text-decoration: none; font-size: 12px; }
 }
 
 header > span { color: var(--text-subtle); font-size: 11px; }
-
-/* Main layout --------------------------------------------------------- */
 
 main {
   max-width: 1180px;
@@ -121,8 +117,6 @@ main {
   color: var(--danger-text);
 }
 
-/* Screenshot + annotations ------------------------------------------- */
-
 .preview-image {
   background: var(--bg-canvas);
   border-radius: 13px;
@@ -146,8 +140,7 @@ main {
 .annotation.rectangle { border: 3px solid #4779f4; }
 .annotation.circle { border: 3px solid #8b5cf6; border-radius: 50%; }
 .annotation.blur { background: #34415766; backdrop-filter: blur(12px); }
-/* NH8 fix: was hardcoded `#202b40` (the LIGHT-mode --text value) which made
-   redaction boxes nearly invisible on the dark-mode --bg-canvas. */
+
 .annotation.redaction { background: var(--text); }
 .annotation.text { background: var(--text); color: var(--bg); padding: 8px; border-radius: 6px; font-weight: 700; overflow: hidden; }
 .annotation.marker {
@@ -161,8 +154,6 @@ main {
   box-shadow: 0 3px 8px #18223833;
 }
 .annotation.spotlight { box-shadow: 0 0 0 9999px #17223899; }
-
-/* Responsive ---------------------------------------------------------- */
 
 @media (max-width: 800px) {
   main { grid-template-columns: 1fr; gap: 30px; padding: 30px; }

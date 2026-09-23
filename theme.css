@@ -31,26 +31,16 @@
   --success: #00ff00; --shadow: #fff4; --shadow-strong: #fff6; --input-bg: #0a0a0a;
 }
 
-/* Wire up --accent-hover (was defined in all 4 themes but never consumed).
-   Applied to primary buttons on hover so the hover state is theme-aware. */
 .primary:hover, button.primary:hover {
   background: var(--accent-hover);
 }
 
-/* NH10 fix: global focus-visible rule for keyboard accessibility.
-   Applies to ALL pages that import theme.css (popup, dashboard, editor,
-   preview, settings, print-export). Without this, keyboard users have no
-   visible focus indicator on any button, link, card, or tab — a WCAG 2.4.7
-   (Focus Visible) violation. */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 3px;
 }
 
-/* NH10 fix: respect prefers-reduced-motion globally. The pulse animation
-   on the recording dot and toast animations should not run for vestibular-
-   sensitive users. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

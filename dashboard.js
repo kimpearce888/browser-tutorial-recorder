@@ -1,26 +1,15 @@
-// Dashboard: list, search, filter, sort, bulk-select, export, duplicate and
-// delete recorded tutorials. Reuses the exporter module for export logic.
-
 import { $, escapeHtml, escapeAttr, sanitizeImageUrl, dbPut, normalizeTutorial } from "./shared.js";
 import { exportTutorial } from "./exporter.js";
 import { initTheme } from "./settings-store.js";
 
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
-
 let tutorials = [];
-let selected = new Set();     // tutorial ids selected for bulk actions
-let viewMode = "grid";        // "grid" | "list"
-let activeExportId = null;    // tutorial id whose export popover is open
+let selected = new Set();
+let viewMode = "grid";
+let activeExportId = null;
 
 const searchInput = $("searchInput");
 const statusFilter = $("statusFilter");
 const sortBy = $("sortBy");
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function send(type, payload = {}, callback) {
   chrome.runtime.sendMessage({ type, ...payload }, callback);
@@ -39,23 +28,19 @@ function formatDate(value) {
 }
 
 function totalAnnotations(tutorial) {
-  // P2-2 v1.5.1: GET_TUTORIALS_SUMMARY ships an `annotationCount` per step
-  // instead of the full `annotations` array.
-  // F5 fix: guard against missing steps array.
+
+
+
   const steps = Array.isArray(tutorial.steps) ? tutorial.steps : [];
   return steps.reduce((sum, step) => sum + (step.annotationCount ?? (step.annotations?.length || 0)), 0);
 }
 
 function firstScreenshot(tutorial) {
-  // F5 fix: guard against missing steps array.
+
   const steps = Array.isArray(tutorial.steps) ? tutorial.steps : [];
   const step = steps.find((s) => s.screenshot?.image);
   return step?.screenshot?.image || "";
 }
-
-// ---------------------------------------------------------------------------
-// Filtering + sorting
-// ---------------------------------------------------------------------------
 
 function visibleTutorials() {
   const query = searchInput.value.trim().toLowerCase();
@@ -67,7 +52,7 @@ function visibleTutorials() {
     const haystack = [
       t.title,
       t.description,
-      // F5 fix: guard against missing steps array.
+
       ...(Array.isArray(t.steps) ? t.steps.map((s) => s.description || "") : []),
       ...(Array.isArray(t.steps) ? t.steps.map((s) => s.action || "") : [])
     ].join(" ").toLowerCase();
@@ -77,8 +62,8 @@ function visibleTutorials() {
   const sort = sortBy.value;
   list = list.slice().sort((a, b) => {
     if (sort === "title") return (a.title || "").localeCompare(b.title || "");
-    // A1 fix: guard against missing steps array (defense-in-depth — GET_TUTORIALS_SUMMARY
-    //   always returns steps: [], but a corrupted SW response shouldn't crash the sort).
+
+
     if (sort === "steps") return (Array.isArray(b.steps) ? b.steps.length : 0) - (Array.isArray(a.steps) ? a.steps.length : 0);
     if (sort === "created") return new Date(b.createdAt) - new Date(a.createdAt);
     return new Date(b.updatedAt) - new Date(a.updatedAt);
@@ -87,14 +72,10 @@ function visibleTutorials() {
   return list;
 }
 
-// ---------------------------------------------------------------------------
-// Stats
-// ---------------------------------------------------------------------------
-
 function renderStats() {
   const total = tutorials.length;
-  // F5 fix: guard against tutorials with missing steps array (e.g., corrupted records).
-  // Previously t.steps.length would throw TypeError, poisoning the entire dashboard.
+
+
   const steps = tutorials.reduce((sum, t) => sum + (Array.isArray(t.steps) ? t.steps.length : 0), 0);
   const annotations = tutorials.reduce((sum, t) => sum + totalAnnotations(t), 0);
   const ready = tutorials.filter((t) => t.status === "ready").length;
@@ -117,10 +98,6 @@ function renderStats() {
       <div class="value">${ready}<small>/ ${total}</small></div>
     </div>`;
 }
-
-// ---------------------------------------------------------------------------
-// Card rendering
-// ---------------------------------------------------------------------------
 
 function renderGrid() {
   const list = visibleTutorials();
@@ -206,10 +183,6 @@ function handleCardAction(id, action, card, event) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Selection / bulk bar
-// ---------------------------------------------------------------------------
-
 function toggleSelect(id) {
   if (selected.has(id)) selected.delete(id);
   else selected.add(id);
@@ -226,10 +199,6 @@ function updateBulkBar() {
   $("bulkBar").classList.toggle("hidden", count === 0);
   $("bulkCount").textContent = `${count} selected`;
 }
-
-// ---------------------------------------------------------------------------
-// Actions: open editor / preview / duplicate / delete
-// ---------------------------------------------------------------------------
 
 function openEditor(id) {
   chrome.tabs.create({ url: chrome.runtime.getURL(`editor.html?id=${encodeURIComponent(id)}`) });
@@ -268,10 +237,6 @@ function bulkDelete() {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Export menu (per-card popover + bulk dialog)
-// ---------------------------------------------------------------------------
-
 function toggleExportMenu(id, card) {
   const menu = $("exportMenu");
   if (activeExportId === id) {
@@ -295,11 +260,11 @@ async function exportSingle(format) {
   const tutorialId = activeExportId;
   closeExportMenu();
   if (!tutorialId) return;
-  // P0 v1.6.0 fix: the dashboard's `tutorials` array is populated from
-  // GET_TUTORIALS_SUMMARY (v1.5.1), which excludes screenshot.image for all
-  // steps except the first. Exporting directly from that array would produce
-  // broken exports — steps 2+ have no screenshot. Fetch the FULL tutorial
-  // via GET_TUTORIAL (singular, uses dbGet) before exporting.
+
+
+
+
+
   let tutorial = null;
   try {
     await new Promise((resolve) => {
@@ -314,7 +279,7 @@ async function exportSingle(format) {
     return;
   }
   try {
-    // PDF uses "print" internally; map the dashboard label.
+
     const kind = format === "pdf" ? "print" : format;
     await exportTutorial(tutorial, kind, 0);
   } catch (error) {
@@ -330,11 +295,11 @@ function openBulkExportDialog() {
 }
 
 async function bulkExport(format) {
-  // PDF export opens a print dialog per tutorial — that requires interactive
-  // user action and would flood the screen with print dialogs in a loop.
-  // Short-circuit with a friendly explanation instead.
-  // D4 fix: close the dialog BEFORE the alert so the user isn't stranded
-  // with the dialog still open after dismissing the alert.
+
+
+
+
+
   if (format === "pdf") {
     $("bulkExportDialog").close();
     alert("PDF export opens a print dialog — please export tutorials one at a time for PDF.");
@@ -343,10 +308,10 @@ async function bulkExport(format) {
   $("bulkExportDialog").close();
   const ids = [...selected];
   const kind = format;
-  // P0 v1.6.0 fix: fetch the FULL tutorial for each id via GET_TUTORIAL
-  // (singular, uses dbGet). The dashboard's `tutorials` array is from
-  // GET_TUTORIALS_SUMMARY and lacks screenshots for steps 2+.
-  // Small delay between downloads so the browser doesn't block them.
+
+
+
+
   for (const id of ids) {
     let tutorial = null;
     try {
@@ -367,10 +332,6 @@ async function bulkExport(format) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Import
-// ---------------------------------------------------------------------------
-
 function importTutorial() {
   $("importInput").click();
 }
@@ -381,17 +342,17 @@ $("importInput").addEventListener("change", (event) => {
   const reader = new FileReader();
   reader.onload = async () => {
     try {
-      // v1.6.9 fix: handle JSON arrays (from Settings → Export All) in
-      // addition to single tutorial objects. The previous code assumed
-      // the file was always a single tutorial object — if it was an array
-      // (the format Settings → Export All produces), normalizeTutorial
-      // would silently produce a garbage tutorial with 0 steps, and the
-      // user's actual tutorials would be silently lost.
+
+
+
+
+
+
       const parsed = JSON.parse(reader.result);
       const list = Array.isArray(parsed) ? parsed : [parsed];
       let imported = 0;
       for (const item of list) {
-        // v1.6.9: per-item try/catch so one bad entry doesn't skip the rest
+
         try {
           const data = normalizeTutorial(item);
           data.id = `tutorial-${crypto.randomUUID()}`;
@@ -413,19 +374,15 @@ $("importInput").addEventListener("change", (event) => {
     }
   };
   reader.readAsText(file);
-  event.target.value = ""; // H10 — allow re-importing the same file
+  event.target.value = "";
 });
 
-// ---------------------------------------------------------------------------
-// New recording
-// ---------------------------------------------------------------------------
-
 function startNewRecording() {
-  // C1 fix: the dashboard tab itself is always the active tab when the user
-  // clicks "+ New recording". The previous code's chrome-extension: URL guard
-  // always fired, blocking the primary CTA. Now we ask the background to find
-  // the most recently active NON-extension tab and start recording there.
-  // If no eligible tab exists, we open a new tab on a default URL.
+
+
+
+
+
   let excludedDomains = [];
   try {
     const raw = localStorage.getItem("btr-excluded-domains");
@@ -433,11 +390,11 @@ function startNewRecording() {
     if (!Array.isArray(excludedDomains)) excludedDomains = [];
   } catch (e) { excludedDomains = []; }
 
-  // D13 fix: prefer tabs in the CURRENT window first, then fall back to any window.
-  // The old code queried all tabs and sorted by active/lastAccessed without
-  // considering which window the dashboard is in — so with multiple windows open,
-  // it could choose a tab from another window even when a valid tab existed in
-  // the dashboard's own window.
+
+
+
+
+
   chrome.tabs.query({ active: true, currentWindow: true }, (currentTabs) => {
     const extensionUrlRe = /^(chrome-extension|chrome|edge|about|devtools|chrome-untrusted|moz-extension|file):/i;
     const currentEligible = (currentTabs || []).filter((t) => t.url && !extensionUrlRe.test(t.url));
@@ -449,79 +406,75 @@ function startNewRecording() {
       });
       return;
     }
-    // Fall back to querying ALL tabs across ALL windows.
+
     chrome.tabs.query({}, (tabs) => {
     if (chrome.runtime.lastError || !Array.isArray(tabs) || tabs.length === 0) {
       alert("No tabs found. Open a webpage and try again.");
       return;
     }
-    // G16 fix: get the current window ID so we can prefer tabs in the
-    // dashboard's own window in the fallback sort.
+
+
     chrome.windows.getCurrent((currentWin) => {
       const currentWindowId = currentWin?.id;
-      // Find the most-recently-active non-extension, non-chrome tab.
-      // G16 fix: prefer tabs in the current window, then active, then lastAccessed.
+
+
       const extensionUrlRe = /^(chrome-extension|chrome|edge|about|devtools|chrome-untrusted|moz-extension|file):/i;
       const eligible = tabs
         .filter((t) => t.url && !extensionUrlRe.test(t.url))
         .sort((a, b) => {
-          // Prefer tabs in the current window
+
           if (a.windowId === currentWindowId && b.windowId !== currentWindowId) return -1;
           if (a.windowId !== currentWindowId && b.windowId === currentWindowId) return 1;
-          // Then prefer active tabs
+
           if (a.active && !b.active) return -1;
           if (!a.active && b.active) return 1;
           return (b.lastAccessed || 0) - (a.lastAccessed || 0);
         });
 
     if (eligible.length === 0) {
-      // No eligible tabs — open a new one on a sensible default.
+
       chrome.tabs.create({ url: "https://www.google.com/" }, (newTab) => {
         setTimeout(() => {
-          // v1.7.3 fix: pass the explicit tabId so the background records
-          // the NEW tab, not the dashboard tab.
-          // A3 fix: check chrome.runtime.lastError for a dead SW.
+
+
+
           send("START_RECORDING", { excludedDomains, tabId: newTab.id }, (result) => {
             if (chrome.runtime.lastError) return alert(chrome.runtime.lastError.message || "The recorder service is unavailable.");
             if (!result?.ok) return alert(result?.error || "Recording could not start.");
           });
-        }, 1500); // wait for the new tab to load
+        }, 1500);
       });
       return;
     }
 
     const tab = eligible[0];
-    // Activate the tab and its window so the user sees the recording badge.
+
     chrome.tabs.update(tab.id, { active: true }, () => {
       if (tab.windowId) chrome.windows.update(tab.windowId, { focused: true }, () => {});
-      // C1 fix: pass the explicit tabId so the background doesn't fall back to
-      // currentTab() which would return the dashboard tab itself.
-      // A3 fix: check chrome.runtime.lastError for a dead SW.
+
+
+
       send("START_RECORDING", { excludedDomains, tabId: tab.id }, (result) => {
         if (chrome.runtime.lastError) return alert(chrome.runtime.lastError.message || "The recorder service is unavailable.");
         if (!result?.ok) return alert(result?.error || "Recording could not start.");
       });
     });
-  }); // close chrome.tabs.query({})
-  }); // close chrome.windows.getCurrent
-  }); // close chrome.tabs.query({active,currentWindow})
+  });
+  });
+  });
 }
 
-// ---------------------------------------------------------------------------
-// Load + init
-// ---------------------------------------------------------------------------
-
 function load() {
-  // P2-2 v1.5.1 fix: use GET_TUTORIALS_SUMMARY instead of GET_TUTORIALS
-  // to avoid loading every step's base64 screenshot into memory just to
-  // render the dashboard grid. The summary includes:
-  //   - All top-level metadata (title, status, dates)
-  //   - All step descriptions (for search) and counts
-  //   - Only the FIRST step's screenshot (for the thumbnail)
-  // When the user opens a tutorial for editing, the editor calls
-  // GET_TUTORIAL (singular) which loads the full record lazily.
+
+
+
+
+
+
+
+
   send("GET_TUTORIALS_SUMMARY", {}, (result) => {
-    // L6: surface connection errors instead of silently showing empty state.
+
     if (chrome.runtime.lastError) {
       $("grid").innerHTML = "";
       $("empty").classList.add("hidden");
@@ -530,8 +483,8 @@ function load() {
       $("noResults").querySelector("p").textContent = chrome.runtime.lastError.message || "Please reload the page.";
       return;
     }
-    // D10 fix: distinguish "no tutorials" from "transport error". Previously
-    // a falsy result (e.g., SW restart mid-message) was treated as "no tutorials".
+
+
     if (!result) {
       $("grid").innerHTML = "";
       $("empty").classList.add("hidden");
@@ -541,8 +494,8 @@ function load() {
       return;
     }
     tutorials = result?.tutorials || [];
-    // H29 fix: reconcile `selected` with the current tutorial list so
-    // deleted/stale IDs from another tab don't remain in the selection.
+
+
     const validIds = new Set(tutorials.map((t) => t.id));
     for (const id of [...selected]) {
       if (!validIds.has(id)) selected.delete(id);
@@ -552,16 +505,11 @@ function load() {
   });
 }
 
-// M7: debounced search input so we don't re-render the grid on every keystroke.
 let searchTimer;
 searchInput.addEventListener("input", () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(renderGrid, 180);
 });
-
-// ---------------------------------------------------------------------------
-// Event wiring
-// ---------------------------------------------------------------------------
 
 $("newRecording").addEventListener("click", startNewRecording);
 $("importBtn").addEventListener("click", importTutorial);
@@ -583,33 +531,28 @@ $("listView").addEventListener("click", () => {
   renderGrid();
 });
 
-// Bulk actions
 $("bulkDelete").addEventListener("click", bulkDelete);
 $("bulkExport").addEventListener("click", openBulkExportDialog);
 $("bulkClear").addEventListener("click", clearSelection);
 
-// Export popover
 $("exportMenu").querySelectorAll("[data-export]").forEach((button) => {
   button.addEventListener("click", () => exportSingle(button.dataset.export));
 });
 
-// Bulk export dialog
 document.querySelector("#bulkExportDialog .dialog-close").addEventListener("click", () => $("bulkExportDialog").close());
 document.querySelectorAll("[data-bulk-export]").forEach((button) => {
   button.addEventListener("click", () => bulkExport(button.dataset.bulkExport));
 });
 
-// Clear filters button (no-results state)
 $("clearFilters").addEventListener("click", () => {
   searchInput.value = "";
   statusFilter.value = "";
-  // D3 fix: also reset the sortBy dropdown so "Clear filters" actually clears
-  // all filters (previously it left the sort intact, which was confusing).
+
+
   sortBy.value = "updated";
   renderGrid();
 });
 
-// Close export popover on outside click / escape
 document.addEventListener("click", (event) => {
   if (!activeExportId) return;
   const menu = $("exportMenu");
@@ -620,31 +563,25 @@ document.addEventListener("keydown", (event) => {
     closeExportMenu();
     $("bulkExportDialog").close();
   }
-  // Select all with Ctrl/Cmd+A when not in an input and no dialog is open.
-  // A2 fix: skip when a <dialog> is open (e.g., bulk export) — pressing Ctrl+A
-  // inside the dialog would otherwise select all tutorials behind it.
+
+
+
   const tag = document.activeElement?.tagName;
   if ((event.metaKey || event.ctrlKey) && event.key === "a" && !["INPUT", "TEXTAREA", "SELECT"].includes(tag) && !document.querySelector("dialog[open]")) {
     event.preventDefault();
-    // D7 fix: mutate the existing Set instead of replacing the reference.
+
     selected.clear();
     tutorials.forEach((t) => selected.add(t.id));
     renderGrid();
   }
 });
 
-// D5 fix: close the export popover when the user scrolls or resizes the window.
-// Without this, the position:fixed popover floats detached from its anchor
-// button after the user scrolls.
 window.addEventListener("scroll", closeExportMenu, true);
 window.addEventListener("resize", closeExportMenu);
 
-// D2 fix: listen for TUTORIALS_CHANGED broadcasts so the dashboard re-loads
-// when tutorials are deleted/imported/cleared from another tab (e.g., Settings).
-// Without this, the dashboard shows ghost tutorials that 404 when opened.
 chrome.runtime.onMessage?.addListener((message) => {
   if (message?.type === "TUTORIALS_CHANGED") {
-    // Debounce in case multiple changes arrive in quick succession.
+
     clearTimeout(load._debounceTimer);
     load._debounceTimer = setTimeout(() => load(), 300);
   }

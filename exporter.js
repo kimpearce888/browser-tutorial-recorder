@@ -1,7 +1,3 @@
-// Export + render helpers shared by editor.js and dashboard.js.
-// Renders the screenshot + flattened annotations onto a canvas at full
-// resolution, then emits JSON / Markdown / HTML / PNG / PDF / GIF / Text.
-
 import {
   escapeHtml,
   sanitizeImageUrl,
@@ -10,14 +6,10 @@ import {
 import { encodeGif } from "./gif-encoder.js";
 import { getSettings } from "./settings-store.js";
 
-// ---------------------------------------------------------------------------
-// Generic helpers
-// ---------------------------------------------------------------------------
-
 function safeName(value) {
-  // v1.0.1: handle non-Latin titles gracefully. If the title is entirely
-  // non-Latin, \W+ replacement would produce an empty string. Fall back to
-  // "tutorial" in that case, but allow Unicode letters through.
+
+
+
   const cleaned = (value || "tutorial")
     .replace(/[^\p{L}\p{N}]+/gu, "-")
     .replace(/^[-_]+|[-_]+$/g, "")
@@ -27,8 +19,8 @@ function safeName(value) {
 }
 
 export function download(name, content, type) {
-  // E4 fix: sanitize the filename so callers passing arbitrary names (e.g.,
-  // tutorial titles with /, \, : characters) don't produce broken downloads.
+
+
   name = String(name || "download").replace(/[/\\:*?"<>|]/g, "-").slice(0, 200);
   const blob = content instanceof Blob ? content : new Blob([content], { type });
   const url = URL.createObjectURL(blob);

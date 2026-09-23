@@ -19,8 +19,6 @@ body {
   background: radial-gradient(circle at 100% 0, var(--bg-accent-soft) 0, transparent 34%), var(--bg);
 }
 
-/* Brand header ----------------------------------------------------------- */
-
 .brand {
   display: flex;
   align-items: center;
@@ -62,8 +60,6 @@ body {
   cursor: pointer;
 }
 
-/* State sections --------------------------------------------------------- */
-
 .state { padding-top: 34px; }
 .hidden { display: none; }
 
@@ -96,8 +92,6 @@ body {
   margin: 0 0 22px;
   max-width: 290px;
 }
-
-/* Buttons ---------------------------------------------------------------- */
 
 .primary,
 .secondary,
@@ -141,9 +135,6 @@ body {
   margin: 0 7px 1px 0;
 }
 
-/* P12 fix: .privacy rules removed — the HTML uses .privacy-note, not .privacy.
-   These rules were dead code from an incomplete rename. */
-
 .dashboard-btn {
   display: block;
   width: 100%;
@@ -158,9 +149,6 @@ body {
   line-height: 1.5;
 }
 
-/* P12 fix: .privacy input rule removed (dead code — no .privacy element exists). */
-
-/* Excluded-domains editor (in popup idle state) */
 .excluded-domains {
   margin: 14px 0 0;
   border-top: 1px solid var(--border);
@@ -177,8 +165,7 @@ body {
   content: "▸ ";
   color: var(--text-muted);
 }
-/* P10 fix: suppress the native Chrome/Safari disclosure triangle so the
-   custom ▸/▾ glyph is the only indicator. Without this, Chrome shows both. */
+
 .excluded-domains summary::-webkit-details-marker { display: none; }
 .excluded-domains[open] summary::before { content: "▾ "; }
 .excluded-domains p {
@@ -246,8 +233,6 @@ body {
   cursor: pointer;
 }
 
-/* Recent captures -------------------------------------------------------- */
-
 .recent { margin-top: 34px; }
 
 .section-label {
@@ -299,8 +284,6 @@ body {
   font-size: 10px;
   margin-top: 2px;
 }
-
-/* Recording + paused + complete ----------------------------------------- */
 
 .recording-pulse,
 .paused-label {
@@ -379,8 +362,6 @@ body {
   cursor: pointer;
   text-decoration: underline;
 }
-
-/* Footer ----------------------------------------------------------------- */
 
 .status-dot {
   display: inline-block;

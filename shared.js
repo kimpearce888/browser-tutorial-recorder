@@ -1,13 +1,6 @@
-// Shared helpers used by background.js, editor.js and preview.js.
-// Kept dependency-free so it loads in both service workers and page contexts.
-
 const DB_NAME = "browser-tutorial-recorder";
 const DB_VERSION = 5;
 const TUTORIAL_STORE = "tutorials";
-
-// ---------------------------------------------------------------------------
-// IndexedDB wrapper (only one store is actually needed: tutorials)
-// ---------------------------------------------------------------------------
 
 let dbPromise = null;
 
@@ -17,7 +10,7 @@ function openDb() {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
-      // Drop legacy stores from earlier versions (sessions, settings).
+
       for (const legacy of ["sessions", "settings"]) {
         if (db.objectStoreNames.contains(legacy)) db.deleteObjectStore(legacy);
       }
@@ -26,19 +19,19 @@ function openDb() {
       }
     };
     request.onblocked = () => {
-      // P0 fix: actually reject so callers don't hang forever waiting for
-      // another tab to close its DB connection during a version upgrade.
+
+
       dbPromise = null;
       reject(new Error("IndexedDB upgrade blocked — close other tabs"));
     };
     request.onsuccess = () => {
       const db = request.result;
-      // P2-01 fix: handle versionchange so another tab can upgrade
+
       db.onversionchange = () => {
         db.close();
         dbPromise = null;
       };
-      // P2-02 fix: handle unexpected close
+
       db.onclose = () => {
         dbPromise = null;
       };
@@ -46,16 +39,16 @@ function openDb() {
     };
     request.onerror = () => {
       dbPromise = null;
-      // B8 fix: VersionError happens when the on-disk DB version is HIGHER
-      // than the code expects — typically from a downgrade (beta → stable).
-      // The previous code called indexedDB.deleteDatabase(DB_NAME), which
-      // DELETED ALL TUTORIALS. That's destructive data loss, not recovery.
-      //
-      // New behavior: surface the error to the caller. The UI already has
-      // try/catch around dbGet/dbPut and shows a clear error message. The
-      // user can manually export their tutorials from a higher version, or
-      // clear IDB via DevTools if they accept the data loss. We do NOT
-      // auto-delete — the user must make that choice.
+
+
+
+
+
+
+
+
+
+
       const err = request.error;
       if (err && err.name === "VersionError") {
         console.error("[BTR] IndexedDB VersionError: the on-disk database is newer than this extension version. Tutorials are preserved but cannot be read until you upgrade the extension or manually clear IndexedDB via DevTools (which WILL delete all tutorials).");
@@ -75,7 +68,7 @@ async function dbPut(value) {
     tx.objectStore(TUTORIAL_STORE).put(value);
     tx.oncomplete = () => resolve(value);
     tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error || new Error("Transaction aborted")); // H13
+    tx.onabort = () => reject(tx.error || new Error("Transaction aborted"));
   });
 }
 
@@ -86,14 +79,10 @@ async function dbDelete(id) {
     tx.objectStore(TUTORIAL_STORE).delete(id);
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error || new Error("Transaction aborted")); // H13
+    tx.onabort = () => reject(tx.error || new Error("Transaction aborted"));
   });
 }
 
-// F6 fix: atomic multi-delete. Uses a SINGLE readwrite transaction so all
-// deletes succeed or fail together — previously `for (const id of ids) await
-// dbDelete(id)` opened N separate transactions, and SW termination midway left
-// a partial library with a success toast.
 async function dbDeleteAll(ids) {
   if (!Array.isArray(ids) || ids.length === 0) return 0;
   const db = await openDb();
@@ -122,12 +111,6 @@ async function dbGetAll() {
   });
 }
 
-// D15 fix: cursor-based summary that avoids materializing every screenshot.
-// dbGetAll() deserializes every tutorial (including every base64 screenshot)
-// into memory — for a large library this causes high memory use and SW pressure.
-// dbGetAllSummaries() uses a cursor to process one record at a time, extracting
-// only the metadata + first screenshot, then discarding the full record before
-// the next iteration. The fn callback receives each summary as it's built.
 async function dbGetAllSummaries() {
   const db = await openDb();
   return new Promise((resolve, reject) => {
@@ -138,17 +121,17 @@ async function dbGetAllSummaries() {
     cursorReq.onsuccess = () => {
       const cursor = cursorReq.result;
       if (!cursor) {
-        // All records processed
+
         resolve(summaries);
         return;
       }
       const t = cursor.value;
-      // E7 fix: guard against non-array steps (e.g., steps: {} or steps: null).
-      // Optional chaining (t.steps?.find) doesn't protect against objects that
-      // exist but aren't arrays — t.steps?.find would be undefined, and calling
-      // it throws TypeError.
+
+
+
+
       const steps = Array.isArray(t.steps) ? t.steps : [];
-      // Find the first step with a screenshot for the thumbnail.
+
       const thumbStep = steps.find((s) => s.screenshot?.image);
       summaries.push({
         id: t.id,
@@ -168,8 +151,8 @@ async function dbGetAllSummaries() {
           annotationCount: s.annotations?.length || 0
         }))
       });
-      // Advance the cursor. The full record (with all screenshots) can now
-      // be garbage-collected since we only retained the summary.
+
+
       cursor.continue();
     };
     cursorReq.onerror = () => reject(cursorReq.error);
@@ -177,9 +160,6 @@ async function dbGetAllSummaries() {
   });
 }
 
-// v1.0.9: fetch a single tutorial by ID without loading the entire library.
-// dbGetAll() deserializes every tutorial (including every base64 screenshot)
-// into memory — opening one tutorial should only touch one record.
 async function dbGet(id) {
   const db = await openDb();
   return new Promise((resolve, reject) => {
@@ -188,10 +168,6 @@ async function dbGet(id) {
     req.onerror = () => reject(req.error);
   });
 }
-
-// ---------------------------------------------------------------------------
-// Small DOM + format helpers (page context only)
-// ---------------------------------------------------------------------------
 
 const $ = (id) => document.getElementById(id);
 

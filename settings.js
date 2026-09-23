@@ -49,7 +49,7 @@ function renderShortcuts() {
 
 function formatKeyDisplay(keys) {
   if (!keys || keys === "Not set") return "Not set";
-  // P2 fix: show ⌘ on macOS instead of Ctrl
+
   const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || "");
   return keys.split("+").map((part) => {
     const label = part === "mod" ? (isMac ? "⌘" : "Ctrl")
@@ -80,20 +80,20 @@ document.addEventListener("keydown", (event) => {
     return existing === keys;
   });
   if (conflict) { toast(`Already used by "${conflict[1].label}"`); return; }
-  // v1.0.3: don't hang if chrome.commands.getAll is unavailable. Was using
-  // optional chaining which silently no-op'd the entire callback, leaving
-  // rebindingAction stuck in "Press keys…" forever.
+
+
+
   const finishRebind = (commands) => {
     const cmds = commands || [];
     const globalConflict = cmds.find((c) => {
       const binding = c.shortcut;
       if (!binding) return false;
-      // v1.2.1 #6: normalize both "Ctrl" and "Command"/"MacCtrl" to "mod"
-      // B15 fix: replace "macctrl" BEFORE "ctrl" — "macctrl" contains "ctrl"
-      // as a substring, so the old order turned "macctrl" into "macmod"
-      // before the explicit "macctrl" → "mod" replacement could run. This
-      // caused Mac users with MacCtrl+K to have their shortcut mis-normalized,
-      // missing global conflict detection.
+
+
+
+
+
+
       const normalized = binding.toLowerCase()
         .replace("macctrl", "mod")
         .replace("ctrl", "mod")
@@ -111,7 +111,7 @@ document.addEventListener("keydown", (event) => {
   if (chrome?.commands?.getAll) {
     chrome.commands.getAll(finishRebind);
   } else {
-    finishRebind([]); // no global commands to check against
+    finishRebind([]);
   }
 });
 
@@ -139,7 +139,7 @@ function bindRecordingControls() {
   $("autoPauseIdle").addEventListener("change", (e) => saveSettings({ autoPauseIdle: Math.max(0, Math.min(600, Number(e.target.value) || 0)) }));
   $("sensitivePatterns").addEventListener("change", (e) => {
     const value = e.target.value;
-    // M14: validate the regex so a typo doesn't silently disable detection.
+
     try {
       new RegExp(value, "i");
       saveSettings({ sensitivePatterns: value });
@@ -179,10 +179,10 @@ function bindAppearanceControls() {
 
 async function renderStorage() {
   const tutorials = await dbGetAll();
-  // F5/A1 fix: guard against corrupted DB records with missing steps array.
-  // dbGetAll() returns raw records — a hand-edited or partially-migrated record
-  // could have steps: undefined, which would throw TypeError here and crash
-  // the entire settings → Storage tab.
+
+
+
+
   const steps = tutorials.reduce((sum, t) => sum + (Array.isArray(t.steps) ? t.steps.length : 0), 0);
   const bytes = new Blob([JSON.stringify(tutorials)]).size;
   const sizeStr = bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(0)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
@@ -208,10 +208,10 @@ function bindStorageControls() {
         const text = await file.text();
         const data = JSON.parse(text);
         const list = Array.isArray(data) ? data : [data];
-        // v1.6.9 fix: per-item try/catch so one bad entry doesn't skip the
-        // rest of the items in the same file. Previously the try/catch
-        // wrapped the entire inner loop — a single null/malformed entry
-        // would abort processing of all remaining entries.
+
+
+
+
         for (const item of list) {
           try {
             const tutorial = normalizeTutorial(item);
@@ -238,14 +238,14 @@ function bindStorageControls() {
   $("clearAll").addEventListener("click", async () => {
     if (!confirm("Delete ALL tutorials? This cannot be undone.")) return;
     const tutorials = await dbGetAll();
-    // F6 fix: use atomic dbDeleteAll (single transaction) instead of N
-    // separate dbDelete calls. Previously SW termination midway left a
-    // partial library with a success toast.
+
+
+
     const ids = tutorials.map(t => t.id).filter(Boolean);
     await dbDeleteAll(ids);
     await renderStorage();
-    // S3 fix: notify other extension pages (e.g., an open dashboard) that
-    // tutorials changed, so they can re-load instead of showing ghost tutorials.
+
+
     try { chrome.runtime.sendMessage({ type: "TUTORIALS_CHANGED" }).catch(() => {}); } catch (_) {}
     toast("All tutorials deleted");
   });
@@ -275,9 +275,9 @@ async function init() {
     bindAppearanceControls();
     bindStorageControls();
     renderAll();
-    // S1 fix: re-render when settings change in another tab so this settings
-    // page doesn't show stale values (and silently overwrite the other tab's
-    // changes when the user interacts with a stale control).
+
+
+
     subscribe((newSettings) => {
       settings = newSettings;
       renderAll();

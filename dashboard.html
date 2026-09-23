@@ -25,10 +25,10 @@
     </header>
 
     <main class="dashboard">
-      <!-- Stats summary -->
+
       <section class="stats" id="stats"></section>
 
-      <!-- Toolbar: search / sort / filter / view toggle -->
+
       <section class="toolbar">
         <div class="search">
           <span>⌕</span>
@@ -53,7 +53,7 @@
         </div>
       </section>
 
-      <!-- Bulk action bar (visible when items are selected) -->
+
       <section id="bulkBar" class="bulk-bar hidden">
         <span id="bulkCount">0 selected</span>
         <div class="bulk-actions">
@@ -63,10 +63,10 @@
         </div>
       </section>
 
-      <!-- Tutorial grid / list -->
+
       <section id="grid" class="grid"></section>
 
-      <!-- Empty state -->
+
       <section id="empty" class="empty hidden">
         <div class="empty-icon">◌</div>
         <strong>No tutorials yet</strong>
@@ -74,7 +74,7 @@
         <button id="emptyStart" class="primary">Start your first recording</button>
       </section>
 
-      <!-- No results (after search / filter) -->
+
       <section id="noResults" class="empty hidden">
         <div class="empty-icon">⌕</div>
         <strong>No matching tutorials</strong>
@@ -83,7 +83,7 @@
       </section>
     </main>
 
-    <!-- Per-card export menu (popover) -->
+
     <div id="exportMenu" class="export-menu hidden">
       <button data-export="json">JSON <span>editable data</span></button>
       <button data-export="markdown">Markdown <span>images + steps</span></button>
@@ -94,7 +94,7 @@
       <button data-export="png">PNG <span>first step image</span></button>
     </div>
 
-    <!-- Export dialog for bulk export -->
+
     <dialog id="bulkExportDialog">
       <div class="dialog-card">
         <button class="dialog-close">×</button>

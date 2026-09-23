@@ -1,4 +1,3 @@
-// Anti-flash theme boot. Runs synchronously before page paint.
 (function () {
   var dark;
   try {
@@ -13,7 +12,7 @@
       return;
     }
   } catch (e) {}
-  // v1.0.3: was `var dark` — redeclaring the function-scoped var from the try block.
+
   dark = matchMedia("(prefers-color-scheme: dark)").matches;
   document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
   try {

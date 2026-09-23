@@ -1,6 +1,3 @@
-// Tutorial preview: render a saved tutorial step-by-step in two modes
-// (guide / watch). Reuses shared helpers for rendering.
-
 import {
   $, escapeHtml, dbGet, canvasSize, annotationBox, withAlpha, arrowHeadPoints, sanitizeImageUrl, normalizeTutorial
 } from "./shared.js";
@@ -12,10 +9,6 @@ let mode = "guide";
 let watchTimer = null;
 let autoplaySpeed = 3000;
 
-// ---------------------------------------------------------------------------
-// Render
-// ---------------------------------------------------------------------------
-
 function render() {
   if (!tutorial?.steps?.length) return;
 
@@ -24,8 +17,8 @@ function render() {
   $("counter").textContent = `${stepIndex + 1} / ${tutorial.steps.length}`;
   $("number").textContent = String(stepIndex + 1).padStart(2, "0");
   $("description").textContent = step.description || "";
-  // P1 fix: hide the image when there's no screenshot instead of setting
-  // src="" (which Chrome resolves to the page's own URL, showing a broken-image icon).
+
+
   const imgUrl = sanitizeImageUrl(step.screenshot?.image);
   const imgEl = $("image");
   if (imgUrl) {
@@ -45,7 +38,7 @@ function render() {
 
   renderAnnotations(step);
 
-  // "Watch" mode auto-advances using the configured autoplay speed.
+
   clearTimeout(watchTimer);
   if (mode === "watch" && stepIndex < tutorial.steps.length - 1) {
     watchTimer = setTimeout(() => {
@@ -60,9 +53,9 @@ function renderAnnotations(step) {
   const size = canvasSize(step);
   layer.innerHTML = "";
 
-  // v1.0.2 #3: compute scale from the layer (already in the DOM) instead of
-  // from each annotation node (which is detached until appendChild). Without
-  // this, text annotations rendered at the wrong size in preview.
+
+
+
   const layerScale = layer.getBoundingClientRect().width / size.width || 1;
 
   for (const annotation of step.annotations || []) {
@@ -81,8 +74,8 @@ function renderAnnotations(step) {
 }
 
 function paintAnnotation(node, a, size, layerScale) {
-  // H21: sanitize numeric SVG attribute values so a malicious tutorial JSON
-  // can't inject markup via startX/startY/endX/endY/strokeWidth fields.
+
+
   const num = (v, fallback = 0) => {
     const n = Number(v);
     return Number.isFinite(n) ? n : fallback;
@@ -94,8 +87,8 @@ function paintAnnotation(node, a, size, layerScale) {
   };
   if (a.type === "arrow") {
     const color = escapeHtml(a.color || "#ff7352");
-    // v1.0.2 #4: pass width/height to arrowHeadPoints so it computes the head
-    // angle in real pixel space (avoids distortion from non-square SVG stretch).
+
+
     const box = annotationBox(a);
     node.innerHTML = `
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
@@ -107,8 +100,8 @@ function paintAnnotation(node, a, size, layerScale) {
     return;
   }
   if (a.type === "text") {
-    // v1.0.2 #3: use layerScale (passed from renderAnnotations) instead of
-    // node.parentElement (which is null because node hasn't been appended yet).
+
+
     const scale = layerScale || 1;
     node.textContent = a.text || "Note";
     node.style.background = a.background || "#202b40";
@@ -138,8 +131,8 @@ function paintAnnotation(node, a, size, layerScale) {
     return;
   }
   if (a.type === "spotlight") {
-    // P2 fix: use 9999px spread (was 999px) to match preview.css's fallback
-    // and ensure the dark overlay covers the full viewport on large monitors.
+
+
     node.style.boxShadow = `0 0 0 9999px ${withAlpha(a.color || "#172238", a.opacity ?? 0.78)}`;
     return;
   }
@@ -157,21 +150,17 @@ function paintAnnotation(node, a, size, layerScale) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Init + event wiring
-// ---------------------------------------------------------------------------
-
 async function init() {
   await initTheme();
   const settings = await getSettings();
   autoplaySpeed = settings.autoplaySpeed || 3000;
-  // v1.0.9: fetch only the one tutorial we need via dbGet(id).
+
   const id = new URLSearchParams(location.search).get("id");
-  // F4 fix: normalize the tutorial on load so malformed records (e.g., from
-  // an older version, hand-edited via DevTools, or imported from a bad JSON)
-  // don't crash the preview's renderAnnotations (which expects sanitized fields).
-  // B13 fix: null-check BEFORE normalizeTutorial — normalizeTutorial(null)
-  // throws, so the old code's `if (!tutorial)` branch was unreachable.
+
+
+
+
+
   const raw = id ? await dbGet(id) : null;
   tutorial = raw ? normalizeTutorial(raw) : null;
 
@@ -199,17 +188,17 @@ $("next").onclick = () => {
     stepIndex++;
     render();
   } else {
-    // Try to close the tab via the tabs API; fall back to window.close if
-    // the caller doesn't have tab permission (e.g. opened as a popup).
+
+
     try {
       chrome.tabs.getCurrent((tab) => {
         if (tab?.id) chrome.tabs.remove(tab.id).catch(() => window.close());
         else window.close();
       });
     } catch (e) {
-      // P5 fix: window.close() only works for windows opened by window.open().
-      // If the preview was opened as a regular tab, redirect to the dashboard
-      // as a fallback so the user isn't left on a dead page.
+
+
+
       try { window.close(); } catch (_) { location.href = "dashboard.html"; }
     }
   }
@@ -224,9 +213,9 @@ document.querySelectorAll(".modes button").forEach((button) => {
 
 $("close").onclick = (event) => {
   event.preventDefault();
-  // F8 fix: use the same tab-aware close mechanism as the Finish button.
-  // window.close() only works for windows opened by window.open() — the
-  // preview may have been opened as a regular tab via chrome.tabs.create.
+
+
+
   try {
     chrome.tabs.getCurrent((tab) => {
       if (tab?.id) chrome.tabs.remove(tab.id).catch(() => window.close());

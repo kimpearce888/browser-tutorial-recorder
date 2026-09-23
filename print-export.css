@@ -1,6 +1,3 @@
-/* A5 fix: import theme.css so the global :focus-visible and prefers-reduced-motion
-   rules apply to the print-export page too. The dynamically-created "Print" button
-   and "Cancel" link need keyboard focus indicators for accessibility. */
 @import url("theme.css");
 
 :root {
@@ -43,17 +40,10 @@ html, body { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", 
 .no-screenshot { display: grid; place-items: center; color: var(--pdf-muted); font-size: 13px; gap: 8px; }
 .no-screenshot-icon { font-size: 48px; opacity: 0.3; }
 
-/* NC4 fix: browsers default to NOT printing background colors. Without this
-   rule, the cover page (.cover with its dark gradient + white text) prints
-   as white text on white paper — completely invisible. The colored step-number
-   badges, cover-mark, cover-toc, etc. all vanish too. */
 @media print {
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
 }
 
-/* H14 fix: the floating "Ready to print" bar created in print-export.js
-   uses position:fixed which browsers render on every printed page. Hide it
-   (and any other fixed-position UI) when the user actually prints. */
 @media print {
   .print-bar, body > div[style*="position:fixed"] { display: none !important; }
 }

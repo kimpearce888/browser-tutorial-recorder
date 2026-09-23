@@ -14,8 +14,6 @@ button, input, select { font: inherit; }
 button { cursor: pointer; }
 .hidden { display: none !important; }
 
-/* Top bar -------------------------------------------------------------- */
-
 .topbar {
   height: 68px;
   background: var(--bg-elevated);
@@ -98,15 +96,11 @@ button { cursor: pointer; }
   text-decoration: underline;
 }
 
-/* Dashboard layout ----------------------------------------------------- */
-
 .dashboard {
   max-width: 1280px;
   margin: 0 auto;
   padding: 28px 26px 60px;
 }
-
-/* Stats ---------------------------------------------------------------- */
 
 .stats {
   display: grid;
@@ -143,8 +137,6 @@ button { cursor: pointer; }
   color: var(--text-muted);
   margin-left: 4px;
 }
-
-/* Toolbar -------------------------------------------------------------- */
 
 .toolbar {
   display: flex;
@@ -213,8 +205,6 @@ button { cursor: pointer; }
   box-shadow: 0 2px 6px var(--shadow);
 }
 
-/* Bulk bar ------------------------------------------------------------- */
-
 .bulk-bar {
   display: flex;
   align-items: center;
@@ -233,8 +223,6 @@ button { cursor: pointer; }
 }
 
 .bulk-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-
-/* Grid + cards --------------------------------------------------------- */
 
 .grid {
   display: grid;
@@ -265,13 +253,10 @@ button { cursor: pointer; }
 
 .card.selected {
   border-color: var(--accent);
-  /* D15 fix: was `box-shadow: 0 0 0 3px var(--shadow)` which was barely
-     visible (translucent dark). Use a stronger accent-tinted ring so the
-     selection is actually visible. */
+
+
   box-shadow: 0 0 0 3px var(--bg-accent-soft), 0 14px 30px var(--shadow);
 }
-
-/* Card thumbnail ------------------------------------------------------- */
 
 .thumb {
   position: relative;
@@ -298,8 +283,8 @@ button { cursor: pointer; }
 .thumb-badge {
   position: absolute;
   top: 10px; left: 10px;
-  /* D16 fix: was hardcoded `#1b2333cc` which was nearly invisible on dark-mode
-     --bg-canvas. Use var(--bg-elevated) so it adapts to the theme. */
+
+
   background: var(--bg-elevated);
   color: var(--text);
   font-size: 9px;
@@ -310,18 +295,15 @@ button { cursor: pointer; }
   backdrop-filter: blur(4px);
 }
 
-/* D16 fix: use var(--success) instead of hardcoded #1c9a62. */
 .thumb-badge.ready { background: var(--success, #1c9a62); color: #fff; }
-
-/* Card checkbox (top-right) ------------------------------------------- */
 
 .card-check {
   position: absolute;
   top: 10px; right: 10px;
   width: 22px; height: 22px;
   border-radius: 6px;
-  /* D16 fix: was hardcoded white border + #1b233380 bg, invisible on light
-     thumbnails. Use theme-aware variables. */
+
+
   border: 2px solid var(--bg-elevated);
   background: var(--bg-elevated);
   backdrop-filter: blur(4px);
@@ -344,8 +326,6 @@ button { cursor: pointer; }
   background: var(--accent);
   border-color: var(--accent);
 }
-
-/* Card body ------------------------------------------------------------ */
 
 .card-body {
   padding: 14px 16px 16px;
@@ -387,8 +367,6 @@ button { cursor: pointer; }
   min-height: 32px;
 }
 
-/* Card actions --------------------------------------------------------- */
-
 .card-actions {
   display: flex;
   gap: 4px;
@@ -412,8 +390,6 @@ button { cursor: pointer; }
 .card-actions button:hover { background: var(--bg-accent-soft); color: var(--accent); }
 .card-actions button.danger:hover { background: var(--danger-bg); color: var(--danger-text); }
 .card-actions button.more { margin-left: auto; }
-
-/* List view overrides -------------------------------------------------- */
 
 .grid.list-view .card {
   flex-direction: row;
@@ -442,8 +418,6 @@ button { cursor: pointer; }
   margin-top: 0;
 }
 
-/* Empty states --------------------------------------------------------- */
-
 .empty {
   text-align: center;
   padding: 80px 20px;
@@ -467,8 +441,6 @@ button { cursor: pointer; }
   font-size: 12px;
   margin: 0 0 22px;
 }
-
-/* Export popover menu -------------------------------------------------- */
 
 .export-menu {
   position: fixed;
@@ -498,8 +470,6 @@ button { cursor: pointer; }
 .export-menu button:hover { background: var(--bg-accent-soft); color: var(--accent); }
 .export-menu button span { color: var(--text-subtle); font-weight: 500; font-size: 10px; }
 
-/* Dialog --------------------------------------------------------------- */
-
 .dialog-card {
   border: 0;
   border-radius: 14px;
@@ -512,10 +482,7 @@ button { cursor: pointer; }
 }
 
 .dialog-card::backdrop { background: var(--shadow-strong); }
-/* D13 fix: ::backdrop only applies to the top-layer <dialog> element, not the
-   inner .dialog-card div. Add the rule to the <dialog> itself so the backdrop
-   is actually styled in both light and dark mode. Also remove the browser
-   default dialog border/background/padding. */
+
 dialog[open] { border: 0; background: transparent; padding: 0; margin: auto; color: inherit; }
 dialog[open]::backdrop { background: var(--shadow-strong); }
 
@@ -557,8 +524,6 @@ dialog[open]::backdrop { background: var(--shadow-strong); }
 .export-grid button:hover { border-color: var(--border-accent); background: var(--bg-accent-soft); }
 .export-grid strong { display: block; font-size: 11px; color: var(--text); }
 .export-grid span { display: block; margin-top: 4px; color: var(--text-muted); font-size: 9px; }
-
-/* Responsive ----------------------------------------------------------- */
 
 @media (max-width: 900px) {
   .stats { grid-template-columns: repeat(2, 1fr); }

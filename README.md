@@ -11,9 +11,9 @@ Everything stays on your device. No accounts, no cloud uploads, no telemetry.
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-34A853)](https://developer.chrome.com/docs/extensions/mv3/)
 [![Tests: 91](https://img.shields.io/badge/Tests-91%20passing-success)](./test-suite.mjs)
 [![CI](https://github.com/kimpearce888/browser-tutorial-recorder/actions/workflows/ci.yml/badge.svg)](https://github.com/kimpearce888/browser-tutorial-recorder/actions/workflows/ci.yml)
-[![Version: 1.0.0](https://img.shields.io/badge/Version-1.0.1-ff7352)](./manifest.json)
+[![Version: 1.0.0](https://img.shields.io/badge/Version-1.0.2-ff7352)](./manifest.json)
 
-**Version: v1.0.1** — first public release.
+**Version: v1.0.2** — first public release.
 
 ---
 
