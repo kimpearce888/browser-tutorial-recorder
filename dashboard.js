@@ -439,7 +439,7 @@ function startNewRecording() {
   // it could choose a tab from another window even when a valid tab existed in
   // the dashboard's own window.
   chrome.tabs.query({ active: true, currentWindow: true }, (currentTabs) => {
-    const extensionUrlRe = /^(chrome-extension|chrome|edge|about|devtools|chrome-untrusted|moz-extension):/i;
+    const extensionUrlRe = /^(chrome-extension|chrome|edge|about|devtools|chrome-untrusted|moz-extension|file):/i;
     const currentEligible = (currentTabs || []).filter((t) => t.url && !extensionUrlRe.test(t.url));
     if (currentEligible.length > 0) {
       const tab = currentEligible[0];
@@ -461,7 +461,7 @@ function startNewRecording() {
       const currentWindowId = currentWin?.id;
       // Find the most-recently-active non-extension, non-chrome tab.
       // G16 fix: prefer tabs in the current window, then active, then lastAccessed.
-      const extensionUrlRe = /^(chrome-extension|chrome|edge|about|devtools|chrome-untrusted|moz-extension):/i;
+      const extensionUrlRe = /^(chrome-extension|chrome|edge|about|devtools|chrome-untrusted|moz-extension|file):/i;
       const eligible = tabs
         .filter((t) => t.url && !extensionUrlRe.test(t.url))
         .sort((a, b) => {

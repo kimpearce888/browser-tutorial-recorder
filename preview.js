@@ -194,6 +194,7 @@ $("previous").onclick = () => {
 };
 
 $("next").onclick = () => {
+  if (!tutorial) return;
   if (stepIndex < tutorial.steps.length - 1) {
     stepIndex++;
     render();

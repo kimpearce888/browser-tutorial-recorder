@@ -1,4 +1,4 @@
-import { $, escapeHtml, dbGetAll, dbDelete, dbDeleteAll, dbPut, normalizeTutorial } from "./shared.js";
+import { $, escapeHtml, dbGetAll, dbDeleteAll, dbPut, normalizeTutorial } from "./shared.js";
 import { getSettings, saveSettings, resetSettings, applyTheme, initTheme, DEFAULT_SHORTCUTS, GLOBAL_COMMANDS, eventToKey, subscribe } from "./settings-store.js";
 import { download } from "./exporter.js";
 

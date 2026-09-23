@@ -1844,7 +1844,6 @@ async function captureFullPage() {
           // simultaneously — for a large nested scroller with many captures,
           // that held dozens of decoded images in memory at once.
           const firstNestedImg = await loadImage(entry.captures[0].image);
-          const nestedImgH = firstNestedImg.naturalHeight;
           const scrollerRect = entry.rect; // CSS px relative to viewport
           const mainImg = firstImg;
           const viewportWidthCss = viewportHeight * mainImg.naturalWidth / mainImg.naturalHeight;
@@ -2094,20 +2093,16 @@ function nextMarkerNumber() {
 // Shortcut cheat sheet
 // ---------------------------------------------------------------------------
 
-function showShortcutCheatSheet() {
+async function showShortcutCheatSheet() {
   const existing = $("shortcutOverlay");
   if (existing) existing.remove();
   const overlay = document.createElement("div");
   overlay.id = "shortcutOverlay";
   overlay.className = "shortcut-overlay";
-  // H19 fix: show the user's ACTUAL shortcut bindings, not the defaults.
-  // If the user customized shortcuts, the cheat sheet should reflect that.
-  // getSettings() is cached so this is synchronous after first load.
-  const userSettings = getSettings();
-  // getSettings returns a Promise on first call but a cached object after.
-  // Since init() already called getSettings() before this function runs,
-  // the cache is populated and this is synchronous.
-  const userShortcuts = (userSettings && !userSettings.then ? userSettings : {}).shortcuts || {};
+  // Show the user's ACTUAL shortcut bindings, not the defaults.
+  // getSettings() is async (always returns a Promise), so we must await it.
+  const userSettings = await getSettings();
+  const userShortcuts = (userSettings || {}).shortcuts || {};
   const entries = Object.entries(DEFAULT_SHORTCUTS);
   const rows = entries.map(([name, def]) => {
     // Use the user's custom binding if set, otherwise the default

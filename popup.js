@@ -266,8 +266,8 @@ $("export").addEventListener("click", () => {
   const json = JSON.stringify(finishedTutorial, null, 2);
   const blob = new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
-  // H26 fix: use the Unicode-aware safeName() from exporter.js instead of
-  // \W+ replacement which collapses non-ASCII titles to empty strings.
+  // Unicode-aware filename sanitizer (duplicated from exporter.js's safeName()
+  // to avoid an extra import in the popup context).
   const rawName = (finishedTutorial.title || "tutorial").replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^[-_]+|[-_]+$/g, "").slice(0, 100).toLowerCase() || "tutorial";
   const filename = `${rawName || "tutorial"}.json`;
   if (chrome.downloads?.download) {

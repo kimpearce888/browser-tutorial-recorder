@@ -917,18 +917,16 @@
     // Wrapped in IIFE so the submit listener returns synchronously (it
     // already called preventDefault synchronously, which is what matters).
     (async () => {
-      let captured = false;
       try {
         // Race the capture against a 5s timeout so a hung background SW
         // can't permanently block form submission. If the capture times
         // out we still re-trigger the submit so the user isn't stuck.
-        const result = await Promise.race([
+        await Promise.race([
           send("SUBMIT", el, event),
           new Promise((resolve) => setTimeout(() => resolve({ ok: false, timeout: true }), 5000))
         ]);
-        captured = result?.ok === true;
       } catch (_) {
-        captured = false;
+        // Capture failed — still re-submit below.
       } finally {
         // Always re-trigger native submission — even if capture failed,
         // we don't want to leave the user unable to submit their form.
@@ -1508,7 +1506,6 @@
       if (message.settings && typeof message.settings.autoPauseIdle === "number") {
         autoPauseIdle = message.settings.autoPauseIdle;
       }
-      const wasActive = active;
       const isExcluded = domainBlocked();
       active = true; // always active — domain filtering happens at the event level
       // P1-11 fix: the old code set active = !wasDomainBlocked, which made
