@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Browser Tutorial Recorder preview</title>
+    <script src="theme-boot.js"></script>
+    <link rel="stylesheet" href="preview.css">
+  </head>
+  <body>
+    <header>
+      <a href="#" id="close">← Back to editor</a>
+      <a href="dashboard.html" id="dashboard">▦ Dashboard</a>
+      <div class="modes">
+        <button class="active" data-mode="guide">Guide</button>
+        <button data-mode="watch">Watch</button>
+      </div>
+      <span id="counter"></span>
+    </header>
+    <main>
+      <div class="preview-copy">
+        <span class="kicker">TUTORIAL PREVIEW</span>
+        <h1 id="title"></h1>
+        <div class="progress"><span id="progress"></span></div>
+        <div class="step-label">STEP <strong id="number"></strong></div>
+        <p id="description"></p>
+        <div class="nav">
+          <button id="previous">← Previous</button>
+          <button id="next" class="next">Next step →</button>
+        </div>
+      </div>
+      <div class="preview-image">
+        <img id="image" alt="Tutorial screenshot">
+        <div id="annotations"></div>
+      </div>
+    </main>
+    <script type="module" src="preview.js"></script>
+  </body>
+</html>

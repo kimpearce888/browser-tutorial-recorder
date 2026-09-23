@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Browser Tutorial Recorder</title>
+    <script src="theme-boot.js"></script>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="popup">
+      <div class="brand">
+        <div class="mark">↗</div>
+        <div>
+          <strong>Browser Tutorial Recorder</strong>
+          <span>Local tutorial studio</span>
+        </div>
+        <button id="dashboard" class="icon" title="Open dashboard">▦</button>
+        <button id="settings" class="icon" title="Open settings">⚙</button>
+      </div>
+
+      <!-- Idle: no recording in progress -->
+      <section id="idle" class="state">
+        <div class="eyebrow">LOCAL WORKSPACE</div>
+        <h1>Make the next workflow<br><em>easy to repeat.</em></h1>
+        <p>Record meaningful browser actions and turn them into a guide you can edit, preview, and share.</p>
+        <button id="start" class="primary"><span class="record-dot"></span> Start recording</button>
+        <button id="openDashboard" class="secondary dashboard-btn">▦ Open dashboard</button>
+        <details class="excluded-domains">
+          <summary>Excluded domains</summary>
+          <p>Recording will pause on these domains (e.g. <code>mail.example.com</code>).</p>
+          <div id="excludedList" class="excluded-list"></div>
+          <div class="excluded-add">
+            <input id="excludedInput" type="text" placeholder="example.com" autocomplete="off">
+            <button id="excludedAdd" type="button">Add</button>
+          </div>
+        </details>
+        <p class="privacy-note">Passwords and other sensitive fields are detected and hidden automatically.</p>
+        <div class="recent">
+          <div class="section-label">RECENT CAPTURE</div>
+          <div id="recentList"></div>
+        </div>
+      </section>
+
+      <!-- Recording in progress -->
+      <section id="recording" class="state hidden">
+        <div class="recording-pulse"><span></span> Recording in this tab</div>
+        <h1 id="recordingTitle">Untitled workflow</h1>
+        <div class="metrics">
+          <div><strong id="stepCount">0</strong><span>steps</span></div>
+          <div><strong id="elapsed">00:00</strong><span>elapsed</span></div>
+        </div>
+        <p class="hint">Keep working in the page. The recorder captures clicks, text intent, selections, scrolls, and navigation.</p>
+        <div class="controls">
+          <button id="pause" class="secondary">Ⅱ Pause</button>
+          <button id="stop" class="danger">Stop recording</button>
+        </div>
+        <button id="discardRecording" class="text-button">Cancel &amp; discard this recording</button>
+      </section>
+
+      <!-- Paused -->
+      <section id="paused" class="state hidden">
+        <div class="paused-label">Ⅱ Recording paused</div>
+        <h1>Your workflow is safe.</h1>
+        <p>Resume when you're ready. Events already captured are saved locally as you go.</p>
+        <div class="controls">
+          <button id="resume" class="primary">Resume</button>
+          <button id="stopPaused" class="secondary">Stop and edit</button>
+        </div>
+      </section>
+
+      <!-- Recording complete -->
+      <section id="complete" class="state hidden">
+        <div class="success-mark">✓</div>
+        <div class="eyebrow">CAPTURE COMPLETE</div>
+        <h1 id="completeTitle">Your tutorial is ready.</h1>
+        <p id="completeSummary"></p>
+        <div class="controls">
+          <button id="edit" class="primary">Open editor</button>
+          <button id="export" class="secondary">Export JSON</button>
+        </div>
+        <button id="discard" class="text-button">Delete this recording</button>
+      </section>
+
+      <footer><span class="status-dot"></span> Stored locally · No account required</footer>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

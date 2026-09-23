@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Settings</title>
+    <script src="theme-boot.js"></script>
+    <link rel="stylesheet" href="settings.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand"><div class="mark">↗</div><div><strong>Browser Tutorial Recorder</strong><span>Settings</span></div></div>
+      <a href="dashboard.html" class="back-link">← Dashboard</a>
+      <div class="topbar-actions"><button id="resetAll" class="text-btn danger-text">Reset to defaults</button></div>
+    </header>
+    <main class="settings-shell">
+      <nav class="tabs">
+        <button class="tab active" data-tab="shortcuts">⌨ Keyboard shortcuts</button>
+        <button class="tab" data-tab="recording">● Recording</button>
+        <button class="tab" data-tab="appearance">◐ Appearance</button>
+        <button class="tab" data-tab="storage">⛁ Storage</button>
+      </nav>
+      <div class="panels">
+        <section id="tab-shortcuts" class="panel active">
+          <h1>Keyboard shortcuts</h1>
+          <p class="hint">Customize shortcuts for the editor. Chrome global shortcuts can be reassigned at <a href="#" id="chromeShortcutsLink">chrome://extensions/shortcuts</a>.</p>
+          <div class="shortcut-section"><h2>Global commands</h2><div id="globalShortcuts" class="shortcut-list"></div></div>
+          <div class="shortcut-section"><h2>Editor shortcuts</h2><p class="hint">Click a shortcut and press a new key combo to rebind it.</p><div id="editorShortcuts" class="shortcut-list"></div></div>
+        </section>
+        <section id="tab-recording" class="panel">
+          <h1>Recording preferences</h1>
+          <label class="setting-row"><div class="setting-info"><strong>Capture delay</strong><span>Milliseconds to wait after hiding the badge before taking a screenshot.</span></div><div class="setting-control"><input type="range" id="captureDelay" min="50" max="2000" step="50"><span id="captureDelayValue" class="value-display">220 ms</span></div></label>
+          <label class="setting-row"><div class="setting-info"><strong>Screenshot format</strong><span>PNG is lossless but larger. JPEG is smaller but loses some detail.</span></div><div class="setting-control"><select id="screenshotFormat"><option value="png">PNG (lossless)</option><option value="jpeg">JPEG (smaller)</option></select></div></label>
+          <label class="setting-row" id="qualityRow"><div class="setting-info"><strong>JPEG quality</strong><span>Only applies when JPEG format is selected.</span></div><div class="setting-control"><input type="range" id="screenshotQuality" min="50" max="100" step="5"><span id="screenshotQualityValue" class="value-display">90</span></div></label>
+          <label class="setting-row"><div class="setting-info"><strong>Auto-pause on idle</strong><span>Automatically pause recording after this many seconds of no interaction. 0 disables.</span></div><div class="setting-control"><input type="number" id="autoPauseIdle" min="0" max="600" step="5"><span class="value-display">seconds</span></div></label>
+          <label class="setting-row"><div class="setting-info"><strong>Sensitive field patterns</strong><span>Regex patterns (pipe-separated) for fields that should be auto-hidden during recording.</span></div><div class="setting-control"><textarea id="sensitivePatterns" rows="2" placeholder="password|token|cvv"></textarea></div></label>
+        </section>
+        <section id="tab-appearance" class="panel">
+          <h1>Appearance</h1>
+          <label class="setting-row"><div class="setting-info"><strong>Theme</strong><span>Choose light, dark, or follow your system preference.</span></div><div class="setting-control"><div class="theme-toggle" id="themeToggle"><button data-theme="light" title="Light">☀</button><button data-theme="dark" title="Dark">☾</button><button data-theme="system" title="System">◐</button></div></div></label>
+          <label class="setting-row"><div class="setting-info"><strong>High contrast mode</strong><span>Increases contrast for better accessibility.</span></div><div class="setting-control"><input type="checkbox" id="highContrast"></div></label>
+          <label class="setting-row"><div class="setting-info"><strong>GIF frame speed</strong><span>Milliseconds per frame when exporting as animated GIF.</span></div><div class="setting-control"><input type="range" id="gifSpeed" min="500" max="3000" step="100"><span id="gifSpeedValue" class="value-display">1200 ms</span></div></label>
+          <label class="setting-row"><div class="setting-info"><strong>Preview autoplay speed</strong><span>Milliseconds per step in Watch mode preview.</span></div><div class="setting-control"><input type="range" id="autoplaySpeed" min="1000" max="6000" step="500"><span id="autoplaySpeedValue" class="value-display">3000 ms</span></div></label>
+        </section>
+        <section id="tab-storage" class="panel">
+          <h1>Storage management</h1>
+          <div class="storage-stats"><div class="stat"><div class="stat-value" id="tutorialCount">0</div><div class="stat-label">tutorials</div></div><div class="stat"><div class="stat-value" id="stepCount">0</div><div class="stat-label">total steps</div></div><div class="stat"><div class="stat-value" id="storageSize">0 KB</div><div class="stat-label">estimated size</div></div></div>
+          <div class="storage-actions"><button id="exportAll" class="soft">Export all tutorials (JSON)</button><button id="importMultiple" class="soft">Import tutorials</button><button id="clearAll" class="danger">Delete all tutorials</button></div>
+          <input id="importInput" type="file" accept="application/json" multiple hidden>
+          <p class="hint">All data is stored locally in your browser.</p>
+        </section>
+      </div>
+    </main>
+    <div id="toast" class="toast hidden">Saved</div>
+    <script type="module" src="settings.js"></script>
+  </body>
+</html>
