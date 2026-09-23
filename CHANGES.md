@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.0.2 — 2026-09-23
+
+### Code hygiene
+
+- Stripped all comments from every source file for a clean release build.
+- Removed stale internal version labels from comments and test names.
+
+**Tests: 91/91 pass.**
+
+## v1.0.1 — 2026-09-23
+
+### Fixes & cleanups
+
+- Fixed 2 real bugs found in a fresh audit.
+- Applied 4 minor cleanups.
+
+**Tests: 91/91 pass.**
+
 ## v1.0.0 — 2026-09-23
 
 ### First public release

@@ -38,7 +38,7 @@ export function download(name, content, type) {
 
 export function loadImage(source) {
   return new Promise((resolve, reject) => {
-    // P2 v1.6.0 fix: sanitize the image URL as defense-in-depth. A crafted
+    // Sanitize the image URL as defense-in-depth. A crafted
     // tutorial JSON could set screenshot.image to "javascript:..." or another
     // non-image scheme. Modern browsers block Image.src = "javascript:..." but
     // sanitizing here ensures the URL is a valid data:image/... URL before
@@ -124,7 +124,7 @@ function drawAnnotations(ctx, image, step) {
       ctx.fillStyle = a.color || "#202b40";
       ctx.fillRect(-width / 2, -height / 2, width, height);
     } else if (a.type === "spotlight") {
-      // v1.0.7: build the overlay-with-hole on a SEPARATE transparent canvas,
+      // Build the overlay-with-hole on a SEPARATE transparent canvas,
       // then composite the finished shape onto the main canvas in one
       // source-over draw. Drawing directly on `ctx` (which already has the
       // opaque screenshot painted into it) meant `destination-out` could
@@ -136,7 +136,7 @@ function drawAnnotations(ctx, image, step) {
       overlay.height = ctx.canvas.height;
       const octx = overlay.getContext("2d");
       octx.setTransform(ctx.getTransform()); // match translate + rotate
-      // v1.0.8: opacity is already baked into withAlpha() below — don't also
+      // Opacity is already baked into withAlpha() below — don't also
       // set globalAlpha or the overlay ends up at opacity² and the hole-punch
       // is weakened, leaving a residual tint in the spotlighted area.
       octx.fillStyle = withAlpha(a.color || "#172238", a.opacity ?? 0.78);
@@ -388,7 +388,7 @@ async function exportTutorial(tutorial, kind, selectedStepIndex) {
   }
 
   if (kind === "png") {
-    // v1.0.3: throw instead of silently no-oping when no step is selected.
+    // Throw instead of silently no-oping when no step is selected.
     const step = tutorial.steps[selectedStepIndex];
     if (!step) throw new Error("Select a step before exporting PNG.");
     const canvas = await annotatedCanvas(step);
@@ -406,7 +406,7 @@ async function exportTutorial(tutorial, kind, selectedStepIndex) {
   }
 
   // PDF / print is handled by a dedicated print-export.html page.
-  // v1.0.3: handle popup-blocked case (was silently returning).
+  // Handle popup-blocked case (was silently returning).
   if (kind === "print" || kind === "pdf") {
     const popup = window.open(`print-export.html?id=${encodeURIComponent(tutorial.id)}`, "_blank");
     if (!popup) throw new Error("Popup blocked. Allow popups for this site to export PDF.");

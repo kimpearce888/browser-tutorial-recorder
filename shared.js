@@ -344,7 +344,7 @@ function normalizeAnnotation(source, index, canvasWidth, canvasHeight) {
 }
 
 function normalizeTutorial(source) {
-  // v1.7.2 fix: guard against null/undefined/non-object input. All callers
+  // Guard against null/undefined/non-object input. All callers
   // have try/catch, but a clean error message is better than a TypeError.
   if (!source || typeof source !== "object" || Array.isArray(source)) {
     throw new Error("Invalid tutorial data: expected a tutorial object.");

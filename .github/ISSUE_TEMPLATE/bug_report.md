@@ -23,7 +23,7 @@ What actually happened.
 
 ## Environment
 - Browser & version: [e.g., Chrome 130]
-- Extension version: [e.g., 1.7.0 — see chrome://extensions]
+- Extension version: [e.g., 1.0.2 — see chrome://extensions]
 - OS: [e.g., macOS 14 / Windows 11]
 
 ## Screenshots / logs

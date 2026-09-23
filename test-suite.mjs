@@ -399,7 +399,7 @@ try {
 console.log(`  → ${passed - s4} passed\n`);
 const s5 = passed;
 
-console.log("━ v1.5.1 fixes (P0-1 submit, P0-2 click dedup) ━");
+console.log("━ fixes: P0-1 submit, P0-2 click dedup ━");
 
 {
 
@@ -435,9 +435,9 @@ console.log("━ v1.5.1 fixes (P0-1 submit, P0-2 click dedup) ━");
   };
   try {
     dom2.window.eval(contentSrc);
-    assert(true, "content.js evaluates without syntax errors (v1.5.1)");
+    assert(true, "content.js evaluates without syntax errors");
   } catch (e) {
-    assert(false, "content.js evaluates without syntax errors (v1.5.1): " + e.message);
+    assert(false, "content.js evaluates without syntax errors: " + e.message);
   }
 }
 
@@ -499,19 +499,19 @@ console.log("━ v1.5.1 fixes (P0-1 submit, P0-2 click dedup) ━");
     const r = await new Promise(res => messageListener({ type: "CAPTURE_FULL_PAGE", tabId: 99 }, senderLocal, res));
     assert(r?.ok === true, "CAPTURE_FULL_PAGE returns ok:true");
     assert(Array.isArray(r?.captures), "CAPTURE_FULL_PAGE returns captures array");
-    assert(Array.isArray(r?.nestedCaptures), "CAPTURE_FULL_PAGE returns nestedCaptures array (P0-1 v1.5.2)");
+    assert(Array.isArray(r?.nestedCaptures), "CAPTURE_FULL_PAGE returns nestedCaptures array (P0-1)");
 
     if (r && r.captures && r.captures.length > 0) {
       for (const c of r.captures) {
-        assert(typeof c.image === "string", "every captures entry has .image string (P0-1 v1.5.2)");
-        assert(typeof c.scrollY === "number", "every captures entry has .scrollY number (P0-1 v1.5.2)");
+        assert(typeof c.image === "string", "every captures entry has .image string (P0-1)");
+        assert(typeof c.scrollY === "number", "every captures entry has .scrollY number (P0-1)");
       }
     }
 
     if (r && r.nestedCaptures) {
       for (const n of r.nestedCaptures) {
-        assert(n.image === undefined, "nestedCaptures entries do NOT have .image (P0-1 v1.5.2)");
-        assert(Array.isArray(n.captures), "nestedCaptures entries have .captures array (P0-1 v1.5.2)");
+        assert(n.image === undefined, "nestedCaptures entries do NOT have .image (P0-1)");
+        assert(Array.isArray(n.captures), "nestedCaptures entries have .captures array (P0-1)");
       }
     }
   } catch (e) {
@@ -538,7 +538,7 @@ console.log("━ v1.5.1 fixes (P0-1 submit, P0-2 click dedup) ━");
     frame: { id: 0, url: "https://example.com", isTop: true },
     viewport: { width: 1280, height: 720, devicePixelRatio: 1 }
   }, senderLocal, res));
-  assert(r?.ok === false, "SUBMIT with no session returns ok:false without throwing (P0-1 v1.5.3)");
+  assert(r?.ok === false, "SUBMIT with no session returns ok:false without throwing (P0-1)");
 }
 
 {
@@ -603,9 +603,9 @@ console.log("━ v1.5.1 fixes (P0-1 submit, P0-2 click dedup) ━");
     const hasClick = steps.some(s => s.action === "CLICK");
     const hasSubmit = steps.some(s => s.action === "SUBMIT");
 
-    assert(!hasClick, "P0-1 v1.5.3: prior CLICK step retracted when SUBMIT arrives on same element");
+    assert(!hasClick, "P0-1: prior CLICK step retracted when SUBMIT arrives on same element");
   } catch (e) {
-    assert(false, "P0-1 v1.5.3 SUBMIT retract test: " + e.message);
+    assert(false, "P0-1 SUBMIT retract test: " + e.message);
   }
 
 
@@ -632,8 +632,8 @@ console.log("━ v1.5.1 fixes (P0-1 submit, P0-2 click dedup) ━");
 
 
   const r = await new Promise(res => messageListener({ type: "GET_TUTORIAL", id: "export-test" }, senderLocal, res));
-  assert(r?.tutorial?.title === "Export Test", "GET_TUTORIAL returns full tutorial for dashboard export (P0 v1.6.0)");
-  assert(r?.tutorial?.steps[0]?.screenshot?.image === "data:image/png;base64,AAA", "GET_TUTORIAL preserves screenshot.image (P0 v1.6.0)");
+  assert(r?.tutorial?.title === "Export Test", "GET_TUTORIAL returns full tutorial for dashboard export (P0)");
+  assert(r?.tutorial?.steps[0]?.screenshot?.image === "data:image/png;base64,AAA", "GET_TUTORIAL preserves screenshot.image (P0)");
 
 
   await new Promise(res => messageListener({ type: "DELETE_TUTORIAL", id: "export-test" }, senderLocal, res));
@@ -647,21 +647,21 @@ console.log("━ v1.5.1 fixes (P0-1 submit, P0-2 click dedup) ━");
 
   try {
     await exporter.loadImage("javascript:alert(1)");
-    assert(false, "loadImage should reject javascript: URLs (P2 v1.6.0)");
+    assert(false, "loadImage should reject javascript: URLs (P2)");
   } catch (e) {
-    assert(e.message.includes("no screenshot"), "loadImage rejects javascript: URLs with sanitization error (P2 v1.6.0)");
+    assert(e.message.includes("no screenshot"), "loadImage rejects javascript: URLs with sanitization error (P2)");
   }
   try {
     await exporter.loadImage("");
     assert(false, "loadImage should reject empty source");
   } catch (e) {
-    assert(e.message.includes("no screenshot"), "loadImage rejects empty source (P2 v1.6.0)");
+    assert(e.message.includes("no screenshot"), "loadImage rejects empty source (P2)");
   }
   try {
     await exporter.loadImage(null);
     assert(false, "loadImage should reject null source");
   } catch (e) {
-    assert(e.message.includes("no screenshot"), "loadImage rejects null source (P2 v1.6.0)");
+    assert(e.message.includes("no screenshot"), "loadImage rejects null source (P2)");
   }
 }
 
@@ -679,7 +679,7 @@ console.log("━ v1.5.1 fixes (P0-1 submit, P0-2 click dedup) ━");
 
 
   const needsMigration = JSON.stringify({ ...normalized, version: t.version }) !== JSON.stringify(t);
-  assert(!needsMigration, "normalizeTutorial is idempotent for well-formed tutorials (v1.6.1)");
+  assert(!needsMigration, "normalizeTutorial is idempotent for well-formed tutorials");
 }
 
 {
@@ -693,16 +693,16 @@ console.log("━ v1.5.1 fixes (P0-1 submit, P0-2 click dedup) ━");
   };
   const normalized = shared.normalizeTutorial(malformed);
 
-  assert(normalized.steps[0].screenshot.image === "", "normalizeTutorial sanitizes invalid screenshot URLs (v1.6.1 migration)");
-  assert(normalized.version === 4, "normalizeTutorial sets version to 4 (v1.6.1 migration)");
+  assert(normalized.steps[0].screenshot.image === "", "normalizeTutorial sanitizes invalid screenshot URLs");
+  assert(normalized.version === 4, "normalizeTutorial sets version to 4");
 
   const needsMigration = JSON.stringify({ ...normalized, version: malformed.version }) !== JSON.stringify(malformed);
-  assert(needsMigration, "normalizeTutorial detects migration needed for malformed tutorials (v1.6.1)");
+  assert(needsMigration, "normalizeTutorial detects migration needed for malformed tutorials");
 }
 
 console.log(`  → ${passed - s5} passed\n`);
 
-console.log("━ v1.1.0 fixes ━");
+console.log("━ regression fixes ━");
 
 const s5b = passed;
 
