@@ -17,11 +17,22 @@ let fullPageInProgress = false;
 let idleTimer = null;
 let flushTimer = null;
 let attachedTabIds = new Set();
+let keepAliveTimer = null;
+
+function armKeepAlive() {
+  if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
+  if (!recorder.isRecording()) return;
+  keepAliveTimer = setInterval(() => {
+    if (!recorder.isRecording()) { clearInterval(keepAliveTimer); keepAliveTimer = null; return; }
+    chrome.runtime.getPlatformInfo().catch(() => {});
+  }, 20000);
+}
 
 function respondOk(extra = {}) { return { ok: true, ...extra }; }
 function respondErr(error) { return { ok: false, error: String((error && error.message) || error) }; }
 
 async function broadcastUi() {
+  armKeepAlive();
   try { await chrome.storage.session.set({ [UI_KEY]: recorder.uiState() }); } catch { /* session store unavailable */ }
   const ui = recorder.uiState();
   if (!ui.session) {
@@ -128,8 +139,11 @@ async function notifyAttached() {
 
 async function startRecording() {
   if (recorder.isActive()) return respondErr("A recording is already in progress.");
-  const settings = await getSettings();
   const tab = await getActiveTab();
+  if (!validForRecording(tab)) {
+    return respondErr("Open a regular website tab (http/https) to start recording.");
+  }
+  const settings = await getSettings();
   recorder.startRecording(tab, {
     excludedDomains: settings.excludedDomains,
     title: tab && tab.title ? `Tutorial — ${tab.title}`.slice(0, 120) : "Untitled browser tutorial"
@@ -569,10 +583,17 @@ chrome.commands.onCommand.addListener(async (command) => {
     const draft = await dbGet(DRAFT_ID).catch(() => null);
     if (draft) {
       recorder.rehydrate(draft);
+      if (recorder.isActive()) {
+        recorder.setPaused(false);
+        armIdleTimer();
+        const ids = recorder.state.session ? [...recorder.state.session.tabIds] : [];
+        for (const tabId of ids) await attachToTab(tabId);
+      }
       await broadcastUi();
-      console.warn("[BTR] recovered draft after service worker restart — recording is paused; resume to continue.");
+      console.warn("[BTR] recovered draft after service worker restart — recording resumed.");
       return;
     }
   }
+  if (!recorder.isActive()) dbDelete(DRAFT_ID).catch(() => {});
   await broadcastUi();
 })();

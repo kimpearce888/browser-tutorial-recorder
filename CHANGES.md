@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.0.2 — 2026-09-24
+
+### Fixed — empty recordings + "No response from the recorder service."
+
+Live-reported: the badge counted steps during recording, but the saved tutorial was empty and the editor showed nothing, with `Uncaught (in promise) Error: No response from the recorder service.` in the editor console.
+
+- **Mid-recording service-worker death eliminated** — MV3 service workers are killed after ~30 s without extension activity. Recording a slow workflow (reading a page, no clicks) let the worker die; the draft then rehydrated as **paused**, silently swallowing every click afterwards while the badge froze at the old count. The background now runs a **20 s keep-alive ping** for the whole recording session, so the worker cannot idle out mid-recording.
+- **Auto-resume after worker restart** — if the worker is ever hard-killed anyway, the recovered draft now resumes **recording** and re-attaches all session tabs, instead of staying paused and eating events. Stale drafts with no live session are cleaned up at boot.
+- **Page-to-background calls retry** — `bgCall` (used by popup, dashboard, editor, settings, preview, print view) now retries twice with backoff on `undefined` responses and transient "message port closed" / "receiving end" errors, which covers the cold-start race when a page messages a waking service worker.
+- **Editor boot hardened** — a failed load no longer leaves a dead empty shell with an uncaught rejection; the editor surfaces "Load failed — reopen this page".
+- **Invalid start tab rejected cleanly** — starting a recording on `chrome://` or other non-web pages now returns "Open a regular website tab (http/https) to start recording." instead of creating a session that could never capture anything.
+
+**Tests: 151/151 pass** (new: bgCall retry semantics — rescue on transient no-response, exhaustion error, port-closed propagation, background error forwarding).
+
 ## v2.0.1 — 2026-09-24
 
 ### Fixed — Chrome hang + crash on Start Recording

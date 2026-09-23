@@ -1,4 +1,5 @@
 import { formatDuration } from "./shared.js";
+import { bgCall as bg } from "./common-ui.js";
 
 const els = {
   statusCard: document.getElementById("status-card"),
@@ -19,14 +20,6 @@ const els = {
 
 let startedAt = 0;
 let timerHandle = null;
-
-function bg(message) {
-  return chrome.runtime.sendMessage(message).then((res) => {
-    if (!res) throw new Error("No response from the recorder service.");
-    if (!res.ok) throw new Error(res.error || "Recorder error.");
-    return res;
-  });
-}
 
 function showError(message) {
   els.error.textContent = message || "";

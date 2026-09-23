@@ -766,14 +766,20 @@ window.addEventListener("resize", () => renderCanvas().catch(() => {}));
 
 (async () => {
   if (!tutorialId) { document.body.innerHTML = "<p style='padding:40px'>Open the editor from the dashboard.</p>"; return; }
-  settings = (await bgCall({ type: "GET_SETTINGS" })).settings;
-  const res = await bgCall({ type: "GET_TUTORIAL", id: tutorialId });
-  tutorial = res.tutorial;
-  tutorial.steps = tutorial.steps || [];
-  els.title.value = tutorial.title;
-  syncStyleInputs();
-  renderAll();
-  const mins = Math.round((tutorial.durationMs || 0) / 60000);
-  document.title = `${tutorial.title} — Editor`;
-  void mins; void formatDuration;
+  try {
+    settings = (await bgCall({ type: "GET_SETTINGS" })).settings;
+    const res = await bgCall({ type: "GET_TUTORIAL", id: tutorialId });
+    tutorial = res.tutorial;
+    tutorial.steps = tutorial.steps || [];
+    els.title.value = tutorial.title;
+    syncStyleInputs();
+    renderAll();
+    const mins = Math.round((tutorial.durationMs || 0) / 60000);
+    document.title = `${tutorial.title} — Editor`;
+    void mins; void formatDuration;
+  } catch (e) {
+    console.error("[BTR] editor boot failed:", e);
+    els.saveState.textContent = "Load failed — reopen this page";
+    els.saveState.style.color = "#d93025";
+  }
 })();

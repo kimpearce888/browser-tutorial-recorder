@@ -574,6 +574,43 @@ section("integration — background ⇄ content message bus (loop regression)");
 }
 
 /* ------------------------------------------------------------------ */
+section("common-ui.js — bgCall retries transient no-response");
+
+{
+  let calls = 0;
+  globalThis.chrome = {
+    runtime: { sendMessage: async () => { calls++; return calls === 1 ? undefined : { ok: true, value: "rescued" }; } }
+  };
+  const { bgCall } = await import("./common-ui.js");
+  const res = await bgCall({ type: "PING" });
+  assert(res.value === "rescued", "bgCall retries once after an undefined response");
+  eq(calls, 2, "bgCall retry count");
+}
+{
+  globalThis.chrome = { runtime: { sendMessage: async () => undefined } };
+  const { bgCall } = await import("./common-ui.js");
+  try { await bgCall({ type: "X" }); assert(false, "bgCall exhausts retries on persistent no-response"); }
+  catch (e) { assert(String(e.message).includes("No response"), "bgCall surfaces no-response error after retries"); }
+}
+{
+  let calls = 0;
+  globalThis.chrome = {
+    runtime: { sendMessage: async () => { calls++; throw new Error("The message port closed before a response was received."); } }
+  };
+  const { bgCall } = await import("./common-ui.js");
+  try { await bgCall({ type: "X" }); assert(false, "port-closed propagates after retries"); }
+  catch (e) { assert(String(e.message).includes("port closed"), "port-closed error surfaced"); }
+  eq(calls, 3, "port-closed retried then gave up");
+}
+{
+  globalThis.chrome = { runtime: { sendMessage: async () => ({ ok: false, error: "Tutorial not found." }) } };
+  const { bgCall } = await import("./common-ui.js");
+  try { await bgCall({ type: "GET_TUTORIAL", id: "nope" }); assert(false, "ok:false rejects"); }
+  catch (e) { eq(e.message, "Tutorial not found.", "bgCall forwards background error text"); }
+  delete globalThis.chrome;
+}
+
+/* ------------------------------------------------------------------ */
 
 console.log("  → " + passed + " passed\n");
 console.log("═══════════════════════════════════════");
