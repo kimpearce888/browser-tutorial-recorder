@@ -1,173 +1,130 @@
-const R_STEPS = 6, G_STEPS = 7, B_STEPS = 6;
-const PALETTE = [];
-for (let r = 0; r < R_STEPS; r++)
-  for (let g = 0; g < G_STEPS; g++)
-    for (let b = 0; b < B_STEPS; b++)
-      PALETTE.push([Math.round(r*255/(R_STEPS-1)), Math.round(g*255/(G_STEPS-1)), Math.round(b*255/(B_STEPS-1))]);
-PALETTE.push([60,60,60],[120,120,120],[180,180,180],[220,220,220]);
-
-const R_LUT = new Uint8Array(256), G_LUT = new Uint8Array(256), B_LUT = new Uint8Array(256);
-for (let i = 0; i < 256; i++) {
-  R_LUT[i] = Math.round(i*(R_STEPS-1)/255);
-  G_LUT[i] = Math.round(i*(G_STEPS-1)/255);
-  B_LUT[i] = Math.round(i*(B_STEPS-1)/255);
-}
-
-function quantize(rgba) {
-  let hasTransparent = false;
-  for (let i = 3; i < rgba.length; i += 4) { if (rgba[i] < 128) { hasTransparent = true; break; } }
-  const transparentIndex = hasTransparent ? 255 : 0;
-  const indices = new Uint8Array(rgba.length / 4);
-  for (let i = 0; i < rgba.length; i += 4) {
-    if (rgba[i + 3] < 128) { indices[i / 4] = transparentIndex; continue; }
-    const idx = R_LUT[rgba[i]] * (G_STEPS * B_STEPS) + G_LUT[rgba[i + 1]] * B_STEPS + B_LUT[rgba[i + 2]];
-    indices[i / 4] = idx < 252 ? idx : 0;
+const WEB_SAFE = [];
+for (let r = 0; r < 6; r++) {
+  for (let g = 0; g < 6; g++) {
+    for (let b = 0; b < 6; b++) {
+      WEB_SAFE.push([r * 51, g * 51, b * 51]);
+    }
   }
-  return { indices, hasTransparent, transparentIndex };
+}
+const PALETTE = WEB_SAFE.slice(0, 216);
+while (PALETTE.length < 256) PALETTE.push([0, 0, 0]);
+
+function nearestIndex(r, g, b) {
+  const qr = Math.min(5, Math.round(r / 51));
+  const qg = Math.min(5, Math.round(g / 51));
+  const qb = Math.min(5, Math.round(b / 51));
+  return qr * 36 + qg * 6 + qb;
 }
 
-function lzwEncode(indices, minCodeSize) {
-  const clearCode = 1 << minCodeSize, eoiCode = clearCode + 1;
-  let nextCode = eoiCode + 1, codeSize = minCodeSize + 1;
-  const dict = new Map();
-  for (let i = 0; i < clearCode; i++) dict.set(String(i), i);
-  const writer = new BitWriter();
-  writer.write(clearCode, codeSize);
-  if (!indices.length) { writer.write(eoiCode, codeSize); return writer.getBytes(); }
-  let prefix = String(indices[0]);
-  for (let i = 1; i < indices.length; i++) {
-    const key = prefix + "," + indices[i];
-    if (dict.has(key)) { prefix = key; }
-    else {
-      writer.write(dict.get(prefix), codeSize);
+class ByteWriter {
+  constructor() { this.bytes = []; }
+  byte(v) { this.bytes.push(v & 0xff); return this; }
+  short(v) { return this.byte(v & 0xff).byte((v >> 8) & 0xff); }
+  ascii(s) { for (let i = 0; i < s.length; i++) this.byte(s.charCodeAt(i)); return this; }
+  bytes_(arr) { for (const v of arr) this.byte(v); return this; }
+  toUint8() { return new Uint8Array(this.bytes); }
+}
+
+function lzwEncode(indexPixels, minCodeSize) {
+  const clearCode = 1 << minCodeSize;
+  const eoiCode = clearCode + 1;
+  let codeSize = minCodeSize + 1;
+  let nextCode = eoiCode + 1;
+  let dict = new Map();
+
+  const out = new ByteWriter();
+  let bitBuffer = 0;
+  let bitCount = 0;
+
+  const writeCode = (code) => {
+    bitBuffer |= code << bitCount;
+    bitCount += codeSize;
+    while (bitCount >= 8) {
+      out.byte(bitBuffer & 0xff);
+      bitBuffer >>= 8;
+      bitCount -= 8;
+    }
+  };
+
+  const resetDict = () => {
+    dict = new Map();
+    nextCode = eoiCode + 1;
+    codeSize = minCodeSize + 1;
+  };
+
+  writeCode(clearCode);
+  resetDict();
+
+  let prefix = indexPixels[0];
+  for (let i = 1; i < indexPixels.length; i++) {
+    const k = indexPixels[i];
+    const combo = (prefix << 8) | k;
+    if (dict.has(combo)) {
+      prefix = dict.get(combo);
+    } else {
+      writeCode(prefix);
       if (nextCode < 4096) {
-        dict.set(key, nextCode); nextCode++;
-        if (nextCode > (1 << codeSize) && codeSize < 12) codeSize++;
+        dict.set(combo, nextCode);
+        if (nextCode === (1 << codeSize) && codeSize < 12) codeSize++;
+        nextCode++;
       } else {
-        writer.write(clearCode, codeSize);
-        dict.clear();
-        for (let j = 0; j < clearCode; j++) dict.set(String(j), j);
-        nextCode = eoiCode + 1; codeSize = minCodeSize + 1;
+        writeCode(clearCode);
+        resetDict();
       }
-      prefix = String(indices[i]);
+      prefix = k;
     }
   }
-  writer.write(dict.get(prefix), codeSize);
-  writer.write(eoiCode, codeSize);
-  return writer.getBytes();
-}
+  writeCode(prefix);
+  writeCode(eoiCode);
+  if (bitCount > 0) out.byte(bitBuffer & 0xff);
 
-class BitWriter {
-  constructor(initialSize = 65536) {
-    this.buf = new Uint8Array(initialSize);
-    this.pos = 0;
-    this.current = 0;
-    this.bitsUsed = 0;
-  }
-  ensure(extra) {
-    if (this.pos + extra + 4 > this.buf.length) {
-      const next = new Uint8Array(this.buf.length * 2);
-      next.set(this.buf);
-      this.buf = next;
-    }
-  }
-  write(code, size) {
-    this.ensure(1);
-    for (let i = 0; i < size; i++) {
-      this.current |= ((code >> i) & 1) << this.bitsUsed;
-      this.bitsUsed++;
-      if (this.bitsUsed === 8) {
-        this.buf[this.pos++] = this.current;
-        this.current = 0;
-        this.bitsUsed = 0;
-        this.ensure(1);
-      }
-    }
-  }
-  getBytes() {
-    if (this.bitsUsed > 0) this.buf[this.pos++] = this.current;
-    return this.buf.subarray(0, this.pos);
-  }
+  return out.toUint8();
 }
 
 function subBlocks(bytes) {
-  let total = 1;
-  for (let i = 0; i < bytes.length; i += 255) total += 1 + Math.min(255, bytes.length - i);
-  const out = new Uint8Array(total);
-  let p = 0;
+  const out = [];
   for (let i = 0; i < bytes.length; i += 255) {
-    const chunkLen = Math.min(255, bytes.length - i);
-    out[p++] = chunkLen;
-    out.set(bytes.subarray(i, i + chunkLen), p);
-    p += chunkLen;
+    const chunk = bytes.slice(i, i + 255);
+    out.push(chunk.length, ...chunk);
   }
-  out[p] = 0;
+  out.push(0);
   return out;
 }
 
-const u16le = v => [v & 0xff, (v >> 8) & 0xff];
-
-function buildGif(frames, options = {}) {
-  const loop = options.loop !== false;
-  const MAX_DIM = 65535;
-  let width = frames.length ? Math.max(...frames.map(f => f.width)) : 1;
-  let height = frames.length ? Math.max(...frames.map(f => f.height)) : 1;
-  const scale = Math.min(width > MAX_DIM ? MAX_DIM / width : 1, height > MAX_DIM ? MAX_DIM / height : 1);
-
-  if (scale < 1) {
-    width = Math.round(width * scale);
-    height = Math.round(height * scale);
-    frames = frames.map(f => {
-      const fw = Math.round(f.width * scale), fh = Math.round(f.height * scale);
-      const rgba = new Uint8Array(fw * fh * 4);
-      for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++) {
-        const si = (Math.floor(y / scale) * f.width + Math.floor(x / scale)) * 4;
-        const di = (y * fw + x) * 4;
-        rgba[di] = f.rgba[si]; rgba[di+1] = f.rgba[si+1]; rgba[di+2] = f.rgba[si+2]; rgba[di+3] = f.rgba[si+3];
-      }
-      return { ...f, width: fw, height: fh, rgba };
-    });
+export function encodeGif(frames, delayMs = 500) {
+  if (!Array.isArray(frames) || frames.length === 0) {
+    throw new Error("encodeGif needs at least one frame.");
   }
+  const delayCs = Math.max(2, Math.round(delayMs / 10));
+  const width = frames[0].width;
+  const height = frames[0].height;
 
-  const estimated = 32 + 768 + frames.length * (width * height + 768 + 64);
-  let bytes = new Uint8Array(Math.max(estimated, 1024));
-  let pos = 0;
-  const push = (...vals) => { for (const v of vals) bytes[pos++] = v; };
-  const pushBytes = arr => {
-    if (arr instanceof Uint8Array) { bytes.set(arr, pos); pos += arr.length; }
-    else { for (const v of arr) bytes[pos++] = v; }
-  };
-  const growIfNeeded = extra => {
-    if (pos + extra + 16 > bytes.length) {
-      const next = new Uint8Array(bytes.length * 2 + extra + 64);
-      next.set(bytes); bytes = next;
-    }
-  };
+  const gif = new ByteWriter();
+  gif.ascii("GIF89a");
+  gif.short(width).short(height);
+  gif.byte(0xf7).byte(0).byte(0);
+  for (const [r, g, b] of PALETTE) gif.byte(r).byte(g).byte(b);
+  gif.ascii("NETSCAPE2.0").byte(3).byte(1).short(0).byte(0);
 
-  for (const c of "GIF89a") bytes[pos++] = c.charCodeAt(0);
-  push(...u16le(width), ...u16le(height), 0x00, 0, 0);
-  if (loop && frames.length > 1) {
-    push(0x21, 0xff, 11);
-    for (const c of "NETSCAPE2.0") bytes[pos++] = c.charCodeAt(0);
-    push(3, 1, ...u16le(0), 0);
-  }
   for (const frame of frames) {
-    const { indices, hasTransparent, transparentIndex } = quantize(frame.rgba);
-    push(0x21, 0xf9, 4, hasTransparent ? 0x09 : 0x08);
-    push(...u16le(Math.round((frame.delayMs ?? 100) / 10)));
-    push(hasTransparent ? transparentIndex : 0, 0);
-    push(0x2c, ...u16le(0), ...u16le(0), ...u16le(frame.width), ...u16le(frame.height), 0x87);
-    growIfNeeded(768);
-    for (let i = 0; i < 256; i++) { bytes[pos++] = PALETTE[i][0]; bytes[pos++] = PALETTE[i][1]; bytes[pos++] = PALETTE[i][2]; }
-    push(8);
-    const subBlock = subBlocks(lzwEncode(indices, 8));
-    growIfNeeded(subBlock.length);
-    pushBytes(subBlock);
+    const ctx = frame.getContext("2d", { willReadFrequently: true });
+    const { data } = ctx.getImageData(0, 0, width, height);
+    const indices = new Uint8Array(width * height);
+    for (let p = 0; p < data.length; p += 4) {
+      indices[p / 4] = nearestIndex(data[p], data[p + 1], data[p + 2]);
+    }
+    gif.byte(0x21).byte(0xf9).byte(0x04).byte(0x04).short(delayCs).byte(0).byte(0);
+    gif.byte(0x2c).short(0).short(0).short(width).short(height).byte(0x00);
+    gif.byte(0x08);
+    gif.bytes_(subBlocks(lzwEncode(indices, 8)));
   }
-  push(0x3b);
-  return bytes.subarray(0, pos);
+
+  gif.byte(0x3b);
+  const bytes = gif.toUint8();
+  return new Blob([bytes], { type: "image/gif" });
 }
 
-export async function encodeGif(frames, options = {}) {
-  return new Blob([buildGif(frames, options)], { type: "image/gif" });
+export function isGif(bytes) {
+  return bytes && bytes.length > 6 &&
+    bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38;
 }

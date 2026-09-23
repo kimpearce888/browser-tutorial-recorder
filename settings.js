@@ -1,274 +1,155 @@
-import { $, escapeHtml, dbGetAll, dbDeleteAll, dbPut, normalizeTutorial } from "./shared.js";
-import { getSettings, saveSettings, resetSettings, applyTheme, initTheme, DEFAULT_SHORTCUTS, GLOBAL_COMMANDS, eventToKey, subscribe } from "./settings-store.js";
-import { download } from "./exporter.js";
+import { bgCall } from "./common-ui.js";
+import { formatBytes, downloadBlob } from "./shared.js";
+import { EDITOR_ACTIONS, normalizeCombo, findShortcutConflicts } from "./settings-store.js";
 
+const $ = (id) => document.getElementById(id);
 let settings = null;
-let rebindingAction = null;
+let listeningAction = null;
 
-document.querySelectorAll(".tab").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    const name = tab.dataset.tab;
-    document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === tab));
-    document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === `tab-${name}`));
-  });
-});
+async function load() {
+  settings = (await bgCall({ type: "GET_SETTINGS" })).settings;
+  fill();
+  refreshStorage();
+}
 
-function toast(message) {
-  const el = $("toast");
-  el.textContent = message;
-  el.classList.remove("hidden");
-  clearTimeout(toast._timer);
-  toast._timer = setTimeout(() => el.classList.add("hidden"), 1500);
+function fill() {
+  $("capture-delay").value = settings.captureDelayMs;
+  $("capture-delay-val").textContent = `${settings.captureDelayMs} ms`;
+  $("shot-format").value = settings.screenshotFormat;
+  $("shot-quality").value = settings.screenshotQuality;
+  $("shot-quality-val").textContent = String(settings.screenshotQuality);
+  $("quality-field").style.display = settings.screenshotFormat === "jpeg" ? "" : "none";
+  $("idle-timeout").value = String(settings.autoPauseIdleSec);
+  $("excluded").value = settings.excludedDomains.join("\n");
+  $("sensitive").value = settings.sensitivePatterns.join("\n");
+  $("theme").value = settings.theme;
+  $("high-contrast").checked = settings.highContrast;
+  $("gif-delay").value = settings.gifFrameDelayMs;
+  $("gif-delay-val").textContent = `${settings.gifFrameDelayMs} ms`;
+  $("preview-delay").value = settings.previewAutoAdvanceMs;
+  $("preview-delay-val").textContent = `${settings.previewAutoAdvanceMs} ms`;
+  renderShortcuts();
+}
+
+async function patch(update) {
+  settings = (await bgCall({ type: "SAVE_SETTINGS", patch: update })).settings;
+  fill();
 }
 
 function renderShortcuts() {
-  try {
-    chrome.commands.getAll((commands) => {
-      if (chrome.runtime.lastError || !commands) {
-        $("globalShortcuts").innerHTML = "<div class='shortcut-item'><span class='shortcut-label'>Could not load — see chrome://extensions/shortcuts</span></div>";
-        return;
-      }
-      $("globalShortcuts").innerHTML = GLOBAL_COMMANDS.map((cmd) => {
-        const actual = commands.find((c) => c.name === cmd.name);
-        const key = actual?.shortcut || "Not set";
-        return `<div class="shortcut-item"><span class="shortcut-scope">${cmd.scope}</span><span class="shortcut-label">${escapeHtml(cmd.label)}</span><span class="shortcut-key">${formatKeyDisplay(key)}</span></div>`;
-      }).join("");
+  const list = $("shortcut-list");
+  list.innerHTML = "";
+  const conflicts = new Set(
+    findShortcutConflicts(settings.editorShortcuts).flatMap((c) => c.actions)
+  );
+  for (const action of EDITOR_ACTIONS) {
+    const row = document.createElement("div");
+    row.className = "shortcut-row" + (conflicts.has(action) ? " conflict" : "");
+    const label = document.createElement("span");
+    label.textContent = action;
+    const kbd = document.createElement("span");
+    kbd.className = "kbd" + (listeningAction === action ? " listening" : "");
+    kbd.textContent = listeningAction === action ? "press keys…" : settings.editorShortcuts[action];
+    kbd.title = conflicts.has(action) ? "Conflict with another action" : "Click to rebind";
+    kbd.addEventListener("click", () => {
+      listeningAction = action;
+      renderShortcuts();
     });
-  } catch (error) {
-    $("globalShortcuts").innerHTML = `<div class='shortcut-item'><span class='shortcut-label'>Error: ${escapeHtml(error.message)}</span></div>`;
+    row.appendChild(label);
+    row.appendChild(kbd);
+    list.appendChild(row);
   }
-  $("editorShortcuts").innerHTML = Object.entries(DEFAULT_SHORTCUTS).map(([action, info]) => {
-    const custom = settings.shortcuts?.[action]?.keys;
-    const keys = custom || info.keys;
-    return `<div class="shortcut-item"><span class="shortcut-scope">${info.scope}</span><span class="shortcut-label">${escapeHtml(info.label)}</span><span class="shortcut-key" data-action="${action}">${formatKeyDisplay(keys)}</span></div>`;
-  }).join("");
-  document.querySelectorAll(".shortcut-key[data-action]").forEach((el) => {
-    el.addEventListener("click", () => startRebind(el));
-  });
 }
 
-function formatKeyDisplay(keys) {
-  if (!keys || keys === "Not set") return "Not set";
+window.addEventListener("keydown", async (e) => {
+  if (!listeningAction) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.key === "Escape") { listeningAction = null; renderShortcuts(); return; }
+  const combo = normalizeCombo([
+    e.ctrlKey || e.metaKey ? "Ctrl" : "",
+    e.altKey ? "Alt" : "",
+    e.shiftKey ? "Shift" : "",
+    e.key === " " ? "Space" : e.key
+  ].filter(Boolean).join("+"));
+  if (!combo) return;
+  settings.editorShortcuts[listeningAction] = combo;
+  listeningAction = null;
+  await patch({ editorShortcuts: settings.editorShortcuts });
+}, true);
 
-  const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || "");
-  return keys.split("+").map((part) => {
-    const label = part === "mod" ? (isMac ? "⌘" : "Ctrl")
-      : part === "shift" ? (isMac ? "⇧" : "Shift")
-      : part === "alt" ? (isMac ? "⌥" : "Alt")
-      : part;
-    return `<kbd>${escapeHtml(label)}</kbd>`;
-  }).join("+");
-}
-
-function startRebind(el) {
-  if (rebindingAction) document.querySelector(".shortcut-key.rebinding")?.classList.remove("rebinding");
-  rebindingAction = el.dataset.action;
-  el.classList.add("rebinding");
-  el.innerHTML = "Press keys…";
-}
-
-document.addEventListener("keydown", (event) => {
-  if (!rebindingAction) return;
-  event.preventDefault();
-  event.stopPropagation();
-  if (event.key === "Escape") { rebindingAction = null; renderShortcuts(); return; }
-  if (["Control", "Meta", "Shift", "Alt"].includes(event.key)) return;
-  const keys = eventToKey(event);
-  const conflict = Object.entries(DEFAULT_SHORTCUTS).find(([action, info]) => {
-    if (action === rebindingAction) return false;
-    const existing = settings.shortcuts?.[action]?.keys || info.keys;
-    return existing === keys;
-  });
-  if (conflict) { toast(`Already used by "${conflict[1].label}"`); return; }
-
-  const finishRebind = (commands) => {
-    const cmds = commands || [];
-    const globalConflict = cmds.find((c) => {
-      const binding = c.shortcut;
-      if (!binding) return false;
-
-      const normalized = binding.toLowerCase()
-        .replace("macctrl", "mod")
-        .replace("ctrl", "mod")
-        .replace("command", "mod")
-        .split("+").sort().join("+");
-      return normalized === keys.split("+").sort().join("+");
-    });
-    if (globalConflict) {
-      toast(`Already used by global command "${globalConflict.description || globalConflict.name}"`);
-      return;
-    }
-    const shortcuts = { ...settings.shortcuts, [rebindingAction]: { keys, label: DEFAULT_SHORTCUTS[rebindingAction].label, scope: "Editor" } };
-    saveSettings({ shortcuts }).then((s) => { settings = s; rebindingAction = null; renderShortcuts(); toast("Shortcut saved"); });
-  };
-  if (chrome?.commands?.getAll) {
-    chrome.commands.getAll(finishRebind);
-  } else {
-    finishRebind([]);
-  }
+$("capture-delay").addEventListener("change", (e) => patch({ captureDelayMs: Number(e.target.value) }));
+$("capture-delay").addEventListener("input", (e) => { $("capture-delay-val").textContent = `${e.target.value} ms`; });
+$("shot-format").addEventListener("change", (e) => patch({ screenshotFormat: e.target.value }));
+$("shot-quality").addEventListener("change", (e) => patch({ screenshotQuality: Number(e.target.value) }));
+$("shot-quality").addEventListener("input", (e) => { $("shot-quality-val").textContent = e.target.value; });
+$("idle-timeout").addEventListener("change", (e) => patch({ autoPauseIdleSec: Math.max(0, Math.min(600, Number(e.target.value) || 0)) }));
+$("excluded").addEventListener("change", (e) => {
+  const domains = e.target.value.split(/\n+/).map((d) => d.trim().toLowerCase()).filter(Boolean);
+  patch({ excludedDomains: domains });
 });
+$("sensitive").addEventListener("change", (e) => {
+  const patterns = e.target.value.split(/\n+/).map((p) => p.trim()).filter(Boolean);
+  patch({ sensitivePatterns: patterns });
+});
+$("theme").addEventListener("change", (e) => patch({ theme: e.target.value }));
+$("high-contrast").addEventListener("change", (e) => patch({ highContrast: e.target.checked }));
+$("gif-delay").addEventListener("change", (e) => patch({ gifFrameDelayMs: Number(e.target.value) }));
+$("gif-delay").addEventListener("input", (e) => { $("gif-delay-val").textContent = `${e.target.value} ms`; });
+$("preview-delay").addEventListener("change", (e) => patch({ previewAutoAdvanceMs: Number(e.target.value) }));
+$("preview-delay").addEventListener("input", (e) => { $("preview-delay-val").textContent = `${e.target.value} ms`; });
 
-$("chromeShortcutsLink").addEventListener("click", (event) => { event.preventDefault(); chrome.tabs.create({ url: "chrome://extensions/shortcuts" }); });
-
-function renderRecording() {
-  $("captureDelay").value = settings.captureDelay;
-  $("captureDelayValue").textContent = `${settings.captureDelay} ms`;
-  $("screenshotFormat").value = settings.screenshotFormat;
-  $("screenshotQuality").value = settings.screenshotQuality;
-  $("screenshotQualityValue").textContent = settings.screenshotQuality;
-  $("qualityRow").style.display = settings.screenshotFormat === "jpeg" ? "flex" : "none";
-  $("autoPauseIdle").value = settings.autoPauseIdle;
-  $("sensitivePatterns").value = settings.sensitivePatterns;
-}
-
-function bindRecordingControls() {
-  $("captureDelay").addEventListener("input", (e) => {
-    const v = Math.max(50, Math.min(2000, Number(e.target.value) || 220));
-    $("captureDelayValue").textContent = `${v} ms`;
-    saveSettings({ captureDelay: v });
-  });
-  $("screenshotFormat").addEventListener("change", (e) => { saveSettings({ screenshotFormat: e.target.value }); $("qualityRow").style.display = e.target.value === "jpeg" ? "flex" : "none"; });
-  $("screenshotQuality").addEventListener("input", (e) => { $("screenshotQualityValue").textContent = e.target.value; saveSettings({ screenshotQuality: Number(e.target.value) }); });
-  $("autoPauseIdle").addEventListener("change", (e) => saveSettings({ autoPauseIdle: Math.max(0, Math.min(600, Number(e.target.value) || 0)) }));
-  $("sensitivePatterns").addEventListener("change", (e) => {
-    const value = e.target.value;
-
-    try {
-      new RegExp(value, "i");
-      saveSettings({ sensitivePatterns: value });
-    } catch (err) {
-      toast("Invalid regex — keeping previous patterns");
-      e.target.value = settings.sensitivePatterns;
-    }
-  });
-}
-
-function renderAppearance() {
-  document.querySelectorAll("#themeToggle button").forEach((btn) => btn.classList.toggle("active", btn.dataset.theme === settings.theme));
-  $("highContrast").checked = !!settings.highContrast;
-  $("gifSpeed").value = settings.gifSpeed;
-  $("gifSpeedValue").textContent = `${settings.gifSpeed} ms`;
-  $("autoplaySpeed").value = settings.autoplaySpeed;
-  $("autoplaySpeedValue").textContent = `${settings.autoplaySpeed} ms`;
-}
-
-function bindAppearanceControls() {
-  document.querySelectorAll("#themeToggle button").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const theme = btn.dataset.theme;
-      saveSettings({ theme }).then((s) => { settings = s; applyTheme(theme); renderAppearance(); toast("Theme saved"); });
-    });
-  });
-  $("highContrast").addEventListener("change", (e) => {
-    saveSettings({ highContrast: e.target.checked }).then((s) => {
-      settings = s;
-      document.documentElement.classList.toggle("high-contrast", e.target.checked);
-      toast(e.target.checked ? "High contrast on" : "High contrast off");
-    });
-  });
-  $("gifSpeed").addEventListener("input", (e) => { $("gifSpeedValue").textContent = `${e.target.value} ms`; saveSettings({ gifSpeed: Number(e.target.value) }); });
-  $("autoplaySpeed").addEventListener("input", (e) => { $("autoplaySpeedValue").textContent = `${e.target.value} ms`; saveSettings({ autoplaySpeed: Number(e.target.value) }); });
-}
-
-async function renderStorage() {
-  const tutorials = await dbGetAll();
-
-  const steps = tutorials.reduce((sum, t) => sum + (Array.isArray(t.steps) ? t.steps.length : 0), 0);
-  const bytes = new Blob([JSON.stringify(tutorials)]).size;
-  const sizeStr = bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(0)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
-  $("tutorialCount").textContent = tutorials.length;
-  $("stepCount").textContent = steps;
-  $("storageSize").textContent = sizeStr;
-}
-
-function bindStorageControls() {
-  $("exportAll").addEventListener("click", async () => {
-    const tutorials = await dbGetAll();
-    download(`browser-tutorial-recorder-export-${Date.now()}.json`, new Blob([JSON.stringify(tutorials, null, 2)], { type: "application/json" }), "application/json");
-    toast("Exported all tutorials");
-  });
-  $("importMultiple").addEventListener("click", () => $("importInput").click());
-  $("importInput").addEventListener("change", async (event) => {
-    const files = [...event.target.files];
-    if (!files.length) return;
-    let imported = 0;
-    let skipped = 0;
-    for (const file of files) {
-      try {
-        const text = await file.text();
-        const data = JSON.parse(text);
-        const list = Array.isArray(data) ? data : [data];
-
-        for (const item of list) {
-          try {
-            const tutorial = normalizeTutorial(item);
-            tutorial.id = `tutorial-${crypto.randomUUID()}-${imported}`;
-            tutorial.createdAt = new Date().toISOString();
-            tutorial.updatedAt = new Date().toISOString();
-            await dbPut(tutorial);
-            imported++;
-          } catch (e) {
-            console.warn(`Failed to import one tutorial from ${file.name}:`, e.message);
-            skipped++;
-          }
-        }
-      } catch (error) { console.warn(`Failed to import ${file.name}:`, error.message); }
-    }
-    event.target.value = "";
-    await renderStorage();
-    if (imported === 0) { toast("No valid tutorials found"); return; }
-    if (skipped > 0) {
-      toast(`Imported ${imported} tutorial${imported === 1 ? "" : "s"}, skipped ${skipped} invalid ${skipped === 1 ? "entry" : "entries"}`);
+async function refreshStorage() {
+  try {
+    const res = await bgCall({ type: "GET_SUMMARIES" });
+    const count = res.summaries.length;
+    if (navigator.storage && navigator.storage.estimate) {
+      const { usage } = await navigator.storage.estimate();
+      $("storage-info").textContent = `${count} tutorial(s) stored · ~${formatBytes(usage)} used`;
     } else {
-      toast(`Imported ${imported} tutorial${imported === 1 ? "" : "s"}`);
+      $("storage-info").textContent = `${count} tutorial(s) stored`;
     }
-  });
-  $("clearAll").addEventListener("click", async () => {
-    if (!confirm("Delete ALL tutorials? This cannot be undone.")) return;
-    const tutorials = await dbGetAll();
-
-    const ids = tutorials.map(t => t.id).filter(Boolean);
-    await dbDeleteAll(ids);
-    await renderStorage();
-
-    try { chrome.runtime.sendMessage({ type: "TUTORIALS_CHANGED" }).catch(() => {}); } catch (_) {}
-    toast("All tutorials deleted");
-  });
-}
-
-$("resetAll").addEventListener("click", async () => {
-  if (!confirm("Reset all settings to defaults? Your tutorials are not affected.")) return;
-  settings = await resetSettings();
-  applyTheme(settings.theme);
-  document.documentElement.classList.toggle("high-contrast", settings.highContrast);
-  renderAll();
-  toast("Settings reset");
-});
-
-function renderAll() {
-  renderShortcuts();
-  renderRecording();
-  renderAppearance();
-  renderStorage().catch((error) => console.warn("Storage render failed:", error));
-}
-
-async function init() {
-  try {
-    await initTheme();
-    settings = await getSettings();
-    bindRecordingControls();
-    bindAppearanceControls();
-    bindStorageControls();
-    renderAll();
-
-    subscribe((newSettings) => {
-      settings = newSettings;
-      renderAll();
-    });
-  } catch (error) {
-    console.error("Settings init failed:", error);
-    alert(`Could not load settings: ${error.message}`);
+  } catch (e) {
+    $("storage-info").textContent = "Storage info unavailable.";
   }
 }
 
-init();
+$("btn-export-all").addEventListener("click", async () => {
+  const res = await bgCall({ type: "GET_SUMMARIES" });
+  const all = [];
+  for (const s of res.summaries) {
+    const t = (await bgCall({ type: "GET_TUTORIAL", id: s.id })).tutorial;
+    all.push(t);
+  }
+  downloadBlob("browser-tutorial-recorder-export.json",
+    new Blob([JSON.stringify(all, null, 2)], { type: "application/json" }));
+});
+
+$("import-file").addEventListener("change", async (e) => {
+  const files = [...e.target.files];
+  if (!files.length) return;
+  let total = 0;
+  for (const file of files) {
+    try {
+      const parsed = JSON.parse(await file.text());
+      const list = Array.isArray(parsed) ? parsed : [parsed];
+      const res = await bgCall({ type: "IMPORT_TUTORIALS", tutorials: list });
+      total += res.imported || 0;
+    } catch (err) {
+      alert(`Could not import ${file.name}: ${err.message}`);
+    }
+  }
+  alert(`Imported ${total} tutorial(s).`);
+  refreshStorage();
+  e.target.value = "";
+});
+
+$("btn-delete-all").addEventListener("click", async () => {
+  if (!confirm("Delete ALL tutorials? This cannot be undone.")) return;
+  await bgCall({ type: "DELETE_ALL_TUTORIALS" });
+  refreshStorage();
+});
+
+load().catch((e) => {
+  document.body.insertAdjacentHTML("beforeend", `<p class="muted" style="padding:20px">Failed to load settings: ${e.message}</p>`);
+});

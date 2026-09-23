@@ -1,180 +1,138 @@
-const STORAGE_KEY = "settings";
-
-const DEFAULT_SETTINGS = {
-  captureDelay: 220,
-  screenshotFormat: "png",
-  screenshotQuality: 90,
-  autoPauseIdle: 0,
-  sensitivePatterns: "password|passcode|secret|token|api.?key|authorization|credit.?card|card.?number|cvv|cvc|csc|cc-|security.?code|otp|one.?time",
-  theme: "system",
-  highContrast: false,
-  gifSpeed: 1200,
-  autoplaySpeed: 3000,
-  shortcuts: {}
-};
-
-export const DEFAULT_SHORTCUTS = {
-  undo:            { keys: "mod+z",       label: "Undo",                       scope: "Editor" },
-  redo:            { keys: "mod+shift+z", label: "Redo",                       scope: "Editor" },
-  save:            { keys: "mod+s",       label: "Save",                       scope: "Editor" },
-  newStep:         { keys: "mod+n",       label: "Add new step",               scope: "Editor" },
-  duplicateStep:   { keys: "mod+d",       label: "Duplicate step",             scope: "Editor" },
-  deleteStep:      { keys: "mod+backspace", label: "Delete step",              scope: "Editor" },
-  preview:         { keys: "mod+shift+p", label: "Open preview",               scope: "Editor" },
-  exportMenu:      { keys: "mod+e",       label: "Open export menu",           scope: "Editor" },
-  tool1:           { keys: "1",           label: "Highlight tool",             scope: "Editor" },
-  tool2:           { keys: "2",           label: "Rectangle tool",             scope: "Editor" },
-  tool3:           { keys: "3",           label: "Circle tool",                scope: "Editor" },
-  tool4:           { keys: "4",           label: "Arrow tool",                 scope: "Editor" },
-  tool5:           { keys: "5",           label: "Text tool",                  scope: "Editor" },
-  tool6:           { keys: "6",           label: "Blur tool",                  scope: "Editor" },
-  tool7:           { keys: "7",           label: "Redaction tool",             scope: "Editor" },
-  tool8:           { keys: "8",           label: "Spotlight tool",             scope: "Editor" },
-  tool9:           { keys: "9",           label: "Marker tool",                scope: "Editor" },
-  deselect:        { keys: "escape",      label: "Deselect annotation",        scope: "Editor" },
-  nextStep:        { keys: "mod+j",       label: "Next step",                  scope: "Editor" },
-  prevStep:        { keys: "mod+k",       label: "Previous step",              scope: "Editor" },
-  copyAnnotation:  { keys: "mod+c",       label: "Copy annotation",            scope: "Editor" },
-  pasteAnnotation: { keys: "mod+v",       label: "Paste annotation",           scope: "Editor" },
-  mergeNext:       { keys: "mod+m",       label: "Merge with next step",       scope: "Editor" },
-  splitStep:       { keys: "mod+shift+k", label: "Split step",                 scope: "Editor" },
-  showShortcuts:   { keys: "?",           label: "Show shortcut cheat sheet",  scope: "Editor" },
-  backToDashboard: { keys: "mod+shift+h", label: "Back to dashboard",          scope: "Editor" }
-};
-
-export const GLOBAL_COMMANDS = [
-  { name: "start-recording",  label: "Start recording", scope: "Global" },
-  { name: "stop-recording",   label: "Stop recording",  scope: "Global" },
-  { name: "pause-resume",     label: "Pause / resume",  scope: "Global" },
-  { name: "open-dashboard",   label: "Open dashboard",  scope: "Global" }
+export const EDITOR_ACTIONS = [
+  "undo", "redo", "save", "preview", "export", "addStep", "duplicateStep",
+  "deleteStep", "nextStep", "prevStep", "mergeStep", "splitStep",
+  "copyAnnotation", "pasteAnnotation", "deselect", "shortcuts", "dashboard"
 ];
 
-let cache = null;
-const listeners = new Set();
+export const DEFAULT_SHORTCUTS = {
+  undo: "Ctrl+Z",
+  redo: "Ctrl+Shift+Z",
+  save: "Ctrl+S",
+  preview: "Ctrl+Shift+P",
+  export: "Ctrl+E",
+  addStep: "Ctrl+N",
+  duplicateStep: "Ctrl+D",
+  deleteStep: "Ctrl+Backspace",
+  nextStep: "Ctrl+J",
+  prevStep: "Ctrl+K",
+  mergeStep: "Ctrl+M",
+  splitStep: "Ctrl+Shift+K",
+  copyAnnotation: "Ctrl+C",
+  pasteAnnotation: "Ctrl+V",
+  deselect: "Escape",
+  shortcuts: "?",
+  dashboard: "Ctrl+Shift+H"
+};
 
-function updateThemeCache(settings) {
-  try { localStorage.setItem("btr-theme", (settings.theme || "system") + "|" + (settings.highContrast ? "1" : "0")); } catch (e) {}
-}
+export const DEFAULT_SETTINGS = {
+  captureDelayMs: 250,
+  screenshotFormat: "png",
+  screenshotQuality: 90,
+  autoPauseIdleSec: 0,
+  sensitivePatterns: ["password", "passwd", "pin", "cvv", "ssn", "credit-card", "card-number", "one-time-code"],
+  excludedDomains: [],
+  theme: "system",
+  highContrast: false,
+  gifFrameDelayMs: 500,
+  previewAutoAdvanceMs: 2500,
+  editorShortcuts: { ...DEFAULT_SHORTCUTS },
+  annotationPresets: []
+};
 
-async function load() {
-  if (!chrome?.storage?.local) {
-    cache = { ...DEFAULT_SETTINGS, shortcuts: { ...DEFAULT_SHORTCUTS } };
-    return cache;
+const KEY = "btr-settings";
+
+function normalizeShortcutMap(shortcuts) {
+  const out = {};
+  for (const action of EDITOR_ACTIONS) {
+    const v = shortcuts && typeof shortcuts === "object" ? shortcuts[action] : undefined;
+    out[action] = typeof v === "string" && v.trim() ? v.trim() : DEFAULT_SHORTCUTS[action];
   }
-  const stored = await chrome.storage.local.get(STORAGE_KEY);
-  cache = { ...DEFAULT_SETTINGS, ...stored[STORAGE_KEY] };
-  cache.shortcuts = { ...DEFAULT_SHORTCUTS, ...cache.shortcuts };
-  updateThemeCache(cache);
-  return cache;
+  return out;
 }
 
-chrome.storage?.onChanged?.addListener((changes, area) => {
-  if (area !== "local" || !changes[STORAGE_KEY]) return;
-  cache = { ...DEFAULT_SETTINGS, ...changes[STORAGE_KEY].newValue };
-  cache.shortcuts = { ...DEFAULT_SHORTCUTS, ...cache.shortcuts };
-  updateThemeCache(cache);
-  listeners.forEach((fn) => fn(cache));
-});
+export function normalizeSettings(raw) {
+  const s = (raw && typeof raw === "object") ? raw : {};
+  const clamp = (v, lo, hi, dflt) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : dflt;
+  };
+  return {
+    captureDelayMs: clamp(s.captureDelayMs, 0, 3000, DEFAULT_SETTINGS.captureDelayMs),
+    screenshotFormat: s.screenshotFormat === "jpeg" ? "jpeg" : "png",
+    screenshotQuality: clamp(s.screenshotQuality, 30, 100, DEFAULT_SETTINGS.screenshotQuality),
+    autoPauseIdleSec: clamp(s.autoPauseIdleSec, 0, 600, DEFAULT_SETTINGS.autoPauseIdleSec),
+    sensitivePatterns: Array.isArray(s.sensitivePatterns)
+      ? s.sensitivePatterns.filter((p) => typeof p === "string" && p.trim()).map((p) => p.trim().slice(0, 100)).slice(0, 30)
+      : [...DEFAULT_SETTINGS.sensitivePatterns],
+    excludedDomains: Array.isArray(s.excludedDomains)
+      ? s.excludedDomains.filter((d) => typeof d === "string" && d.trim()).map((d) => d.trim().toLowerCase().slice(0, 200)).slice(0, 100)
+      : [],
+    theme: ["light", "dark", "system"].includes(s.theme) ? s.theme : "system",
+    highContrast: Boolean(s.highContrast),
+    gifFrameDelayMs: clamp(s.gifFrameDelayMs, 100, 2000, DEFAULT_SETTINGS.gifFrameDelayMs),
+    previewAutoAdvanceMs: clamp(s.previewAutoAdvanceMs, 500, 10000, DEFAULT_SETTINGS.previewAutoAdvanceMs),
+    editorShortcuts: normalizeShortcutMap(s.editorShortcuts),
+    annotationPresets: Array.isArray(s.annotationPresets)
+      ? s.annotationPresets.filter((p) => p && typeof p === "object" && p.name).slice(0, 30)
+      : []
+  };
+}
 
 export async function getSettings() {
-  if (cache) return cache;
-  return load();
-}
-
-let settingsWriteQueue = Promise.resolve();
-function serializeSettingsWrite(fn) {
-  const result = settingsWriteQueue.then(fn, fn);
-
-  settingsWriteQueue = result.then(() => undefined, () => undefined);
-  return result;
+  const stored = await chrome.storage.local.get(KEY);
+  return normalizeSettings(stored[KEY]);
 }
 
 export async function saveSettings(patch) {
-  return serializeSettingsWrite(async () => {
-    const current = await getSettings();
-    const next = { ...current, ...patch };
-    if (patch.shortcuts) next.shortcuts = { ...current.shortcuts, ...patch.shortcuts };
-    await chrome.storage.local.set({ [STORAGE_KEY]: next });
-    cache = next;
-    updateThemeCache(next);
-    return next;
-  });
+  const current = await getSettings();
+  const next = normalizeSettings({ ...current, ...patch });
+  await chrome.storage.local.set({ [KEY]: next });
+  return next;
 }
 
-export async function resetSettings() {
-  return serializeSettingsWrite(async () => {
-    await chrome.storage.local.remove(STORAGE_KEY);
-    cache = { ...DEFAULT_SETTINGS, shortcuts: { ...DEFAULT_SHORTCUTS } };
-    updateThemeCache(cache);
-    return cache;
-  });
-}
-
-export function subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); }
-
-export function getShortcut(action) {
-  return (cache?.shortcuts?.[action]?.keys) || DEFAULT_SHORTCUTS[action]?.keys || null;
-}
-
-export function eventToKey(event) {
-  const parts = [];
-  if (event.metaKey || event.ctrlKey) parts.push("mod");
-  if (event.altKey) parts.push("alt");
-  let key = event.key.toLowerCase();
-  if (key === " ") key = "space";
-  if (["control", "meta", "shift", "alt"].includes(key)) {
-    if (event.shiftKey) parts.push("shift");
-    return parts.join("+");
-  }
-
-  if (event.shiftKey && key.length === 1 && /[a-z0-9]/.test(key)) {
-    parts.push("shift");
-  }
-
-  parts.push(key);
-  return parts.join("+");
-}
-
-export function matchesShortcut(event, action) {
-  const binding = getShortcut(action);
-  if (!binding) return false;
-  return eventToKey(event) === binding;
-}
-
-function resolveTheme(theme) {
-  if (theme === "system") return (window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false) ? "dark" : "light";
-  return theme;
-}
-
-export function applyTheme(theme) {
-  document.documentElement.setAttribute("data-theme", resolveTheme(theme));
-}
-
-export function applyHighContrast(enabled) {
-  document.documentElement.classList.toggle("high-contrast", Boolean(enabled));
-}
-
-let _mediaListenerRegistered = false;
-let _subscribed = false;
-
-export async function initTheme() {
-  try {
-    const settings = await getSettings();
-    applyTheme(settings.theme);
-    applyHighContrast(settings.highContrast);
-
-    if (!_mediaListenerRegistered) {
-      _mediaListenerRegistered = true;
-      window.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener?.("change", () => {
-        if ((cache || {}).theme === "system") applyTheme("system");
-      });
+export function findShortcutConflicts(shortcuts) {
+  const seen = new Map();
+  const conflicts = [];
+  for (const action of EDITOR_ACTIONS) {
+    const combo = normalizeCombo(shortcuts[action] || "");
+    if (!combo) continue;
+    if (seen.has(combo)) {
+      conflicts.push({ combo, actions: [seen.get(combo), action] });
+    } else {
+      seen.set(combo, action);
     }
-
-    if (!_subscribed) {
-      _subscribed = true;
-      subscribe((s) => { applyTheme(s.theme); applyHighContrast(s.highContrast); });
-    }
-  } catch (e) {
-    applyTheme("system");
   }
+  return conflicts;
+}
+
+export function normalizeCombo(combo) {
+  if (typeof combo !== "string") return "";
+  const parts = combo.split("+").map((p) => p.trim()).filter(Boolean);
+  if (!parts.length) return "";
+  const mods = parts.filter((p) => /^(Ctrl|Alt|Shift|Meta)$/i.test(p)).map((p) => p[0].toUpperCase() + p.slice(1).toLowerCase());
+  const keys = parts.filter((p) => !/^(Ctrl|Alt|Shift|Meta)$/i.test(p));
+  if (keys.length !== 1) return "";
+  mods.sort((a, b) => {
+    const order = { Ctrl: 0, Alt: 1, Shift: 2, Meta: 3 };
+    return order[a] - order[b];
+  });
+  const key = keys[0].length === 1 ? keys[0].toUpperCase() : keys[0];
+  return [...mods, key].join("+");
+}
+
+const CHANGE_LISTENERS = new Set();
+
+export function onSettingsChanged(listener) {
+  CHANGE_LISTENERS.add(listener);
+  return () => CHANGE_LISTENERS.delete(listener);
+}
+
+if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local" || !changes[KEY]) return;
+    const next = normalizeSettings(changes[KEY].newValue);
+    for (const listener of CHANGE_LISTENERS) {
+      try { listener(next); } catch (e) { console.error("[BTR] settings listener failed:", e); }
+    }
+  });
 }

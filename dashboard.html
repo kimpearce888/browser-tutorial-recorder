@@ -1,110 +1,41 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Browser Tutorial Recorder dashboard</title>
-    <script src="theme-boot.js"></script>
-    <link rel="stylesheet" href="dashboard.css">
-  </head>
-  <body>
-    <header class="topbar">
-      <div class="brand">
-        <div class="mark">↗</div>
-        <div>
-          <strong>Browser Tutorial Recorder</strong>
-          <span>Tutorial dashboard</span>
-        </div>
-      </div>
-      <div class="topbar-actions">
-        <a class="back-link" href="settings.html" target="_blank" title="Open settings">⚙ Settings</a>
-        <button id="newRecording" class="soft">+ New recording</button>
-        <button id="importBtn" class="soft">Import</button>
-        <input id="importInput" type="file" accept="application/json" hidden>
-      </div>
-    </header>
-
-    <main class="dashboard">
-
-      <section class="stats" id="stats"></section>
-
-      <section class="toolbar">
-        <div class="search">
-          <span>⌕</span>
-          <input id="searchInput" type="search" placeholder="Search by title or action…">
-        </div>
-        <div class="filters">
-          <select id="statusFilter" title="Filter by status">
-            <option value="">All statuses</option>
-            <option value="draft">Draft</option>
-            <option value="ready">Ready</option>
-          </select>
-          <select id="sortBy" title="Sort by">
-            <option value="updated">Recently updated</option>
-            <option value="created">Recently created</option>
-            <option value="title">Title (A–Z)</option>
-            <option value="steps">Step count</option>
-          </select>
-          <div class="view-toggle">
-            <button id="gridView" class="active" title="Grid view">▦</button>
-            <button id="listView" title="List view">☰</button>
-          </div>
-        </div>
-      </section>
-
-      <section id="bulkBar" class="bulk-bar hidden">
-        <span id="bulkCount">0 selected</span>
-        <div class="bulk-actions">
-          <button id="bulkExport" class="soft">Export selected</button>
-          <button id="bulkDelete" class="danger">Delete selected</button>
-          <button id="bulkClear" class="text-btn">Clear</button>
-        </div>
-      </section>
-
-      <section id="grid" class="grid"></section>
-
-      <section id="empty" class="empty hidden">
-        <div class="empty-icon">◌</div>
-        <strong>No tutorials yet</strong>
-        <p>Start recording a browser workflow and it will appear here.</p>
-        <button id="emptyStart" class="primary">Start your first recording</button>
-      </section>
-
-      <section id="noResults" class="empty hidden">
-        <div class="empty-icon">⌕</div>
-        <strong>No matching tutorials</strong>
-        <p>Try a different search term or clear the filters.</p>
-        <button id="clearFilters" class="primary">Clear filters</button>
-      </section>
-    </main>
-
-    <div id="exportMenu" class="export-menu hidden">
-      <button data-export="json">JSON <span>editable data</span></button>
-      <button data-export="markdown">Markdown <span>images + steps</span></button>
-      <button data-export="html">HTML <span>standalone page</span></button>
-      <button data-export="pdf">PDF <span>printable document</span></button>
-      <button data-export="gif">GIF <span>animated steps</span></button>
-      <button data-export="text">Text <span>plain outline</span></button>
-      <button data-export="png">PNG <span>first step image</span></button>
+<head>
+  <meta charset="UTF-8" />
+  <title>Tutorials — Browser Tutorial Recorder</title>
+  <script src="theme-boot.js"></script>
+  <link rel="stylesheet" href="theme.css" />
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body data-page="dashboard">
+  <header class="topbar">
+    <h1>Tutorials</h1>
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="Search tutorials…" autocomplete="off" />
+      <select id="sort" aria-label="Sort">
+        <option value="updated-desc">Recently updated</option>
+        <option value="updated-asc">Oldest updated</option>
+        <option value="title-asc">Title A–Z</option>
+        <option value="title-desc">Title Z–A</option>
+        <option value="steps-desc">Most steps</option>
+      </select>
+      <button id="view-toggle" class="btn ghost" title="Toggle view">▦ Grid</button>
     </div>
+  </header>
 
-    <dialog id="bulkExportDialog">
-      <div class="dialog-card">
-        <button class="dialog-close">×</button>
-        <span class="kicker">BULK EXPORT</span>
-        <h2>Export <span id="bulkExportCount">0</span> tutorials</h2>
-        <p>Choose a format. Each tutorial will be downloaded as a separate file.</p>
-        <div class="export-grid">
-          <button data-bulk-export="json"><strong>JSON</strong><span>Full editable data</span></button>
-          <button data-bulk-export="markdown"><strong>Markdown</strong><span>Images and steps</span></button>
-          <button data-bulk-export="html"><strong>HTML</strong><span>Standalone pages</span></button>
-          <button data-bulk-export="pdf"><strong>PDF</strong><span>Printable documents (one at a time)</span></button>
-          <button data-bulk-export="gif"><strong>GIF</strong><span>Animated steps</span></button>
-          <button data-bulk-export="text"><strong>Text</strong><span>Plain-text outlines</span></button>
-        </div>
-      </div>
-    </dialog>
+  <div id="bulkbar" class="bulkbar hidden">
+    <span id="bulk-count">0 selected</span>
+    <button id="bulk-export" class="btn small">Export selected</button>
+    <button id="bulk-delete" class="btn small danger">Delete selected</button>
+    <button id="bulk-clear" class="btn small ghost">Clear</button>
+  </div>
 
-    <script type="module" src="dashboard.js"></script>
-  </body>
+  <main id="list" class="grid" aria-live="polite"></main>
+
+  <p id="empty" class="empty hidden">
+    No tutorials yet. Click the toolbar icon and press <strong>Start recording</strong>.
+  </p>
+
+  <script type="module" src="dashboard.js"></script>
+</body>
 </html>

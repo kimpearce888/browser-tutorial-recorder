@@ -1,228 +1,106 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Browser Tutorial Recorder editor</title>
-    <script src="theme-boot.js"></script>
-    <link rel="stylesheet" href="editor.css">
-  </head>
-  <body>
-    <header class="topbar">
-      <div class="brand">
-        <div class="mark">↗</div>
-        <div><strong>Browser Tutorial Recorder</strong><span>Local tutorial studio</span></div>
+<head>
+  <meta charset="UTF-8" />
+  <title>Editor — Browser Tutorial Recorder</title>
+  <script src="theme-boot.js"></script>
+  <link rel="stylesheet" href="theme.css" />
+  <link rel="stylesheet" href="editor.css" />
+</head>
+<body data-page="editor">
+  <header class="editor-topbar">
+    <button id="btn-dashboard" class="btn ghost" title="Back to dashboard (Ctrl+Shift+H)">← Dashboard</button>
+    <input id="tutorial-title" class="title-input" placeholder="Tutorial title" aria-label="Tutorial title" />
+    <span id="save-state" class="save-state" aria-live="polite"></span>
+    <button id="btn-preview" class="btn">Preview</button>
+    <div class="export-wrap">
+      <button id="btn-export" class="btn primary">Export ▾</button>
+      <div id="export-menu" class="menu hidden">
+        <button data-kind="html">Standalone HTML</button>
+        <button data-kind="pdf">PDF / Print</button>
+        <button data-kind="gif">Animated GIF</button>
+        <button data-kind="markdown">Markdown</button>
+        <button data-kind="png">PNG (current step)</button>
+        <button data-kind="json">JSON</button>
+        <button data-kind="text">Plain text</button>
       </div>
-      <a id="backToDashboard" class="back-link" href="#" title="Back to dashboard">← Dashboard</a>
-      <a id="openSettings" class="back-link" href="settings.html" target="_blank" title="Open settings">⚙ Settings</a>
-      <div class="crumb">
-        <span id="saveState">Saved locally</span>
-        <span class="slash">/</span>
-        <strong id="headerTitle">Untitled tutorial</strong>
-        <button id="toggleStatus" class="status-toggle" type="button" title="Toggle ready/draft status">Draft</button>
+    </div>
+  </header>
+
+  <main class="editor-layout">
+    <aside class="steps-pane">
+      <div class="pane-head">
+        <h2>Steps</h2>
+        <span id="step-count-label" class="muted"></span>
       </div>
-      <div class="toolbar">
-        <button id="undo" title="Undo">↶</button>
-        <button id="redo" title="Redo">↷</button>
-        <button id="import">Import</button>
-        <button id="preview" class="soft">Preview</button>
-        <button id="exportMenu" class="accent">Export <span>⌄</span></button>
-        <input id="importInput" type="file" accept="application/json" hidden>
+      <div id="step-list" class="step-list" role="listbox" aria-label="Tutorial steps"></div>
+      <div class="steps-tools">
+        <button id="btn-add-step" class="btn small">+ Add step</button>
       </div>
-    </header>
+    </aside>
 
-    <main class="editor-shell">
-
-      <aside class="steps-panel">
-        <div class="panel-head">
-          <div><span class="kicker">TUTORIAL FLOW</span><h2 id="stepCountLabel">0 steps</h2></div>
-          <button id="addStep" class="add" type="button" aria-label="Add step">+</button>
-        </div>
-        <div id="stepList" class="step-list"></div>
-        <div class="side-note">
-          <span>⌁</span>
-          <div><strong>Local-first editing</strong><p>Changes save automatically to this browser.</p></div>
-        </div>
-      </aside>
-
-      <section class="canvas-panel">
-        <div class="canvas-head">
-          <div><span class="kicker">CANVAS</span><h1 id="canvasTitle">Untitled tutorial</h1></div>
-          <div class="canvas-actions">
-            <button id="fit" type="button">Fit</button>
-            <button id="toggleMarkers" type="button">Markers</button>
-            <button id="cropStep" type="button" title="Crop the screenshot to a selection">⬓ Crop</button>
-            <button id="captureFullPage" type="button" title="Capture a full-page screenshot and add as a step">⇕ Full page</button>
-            <button id="mergeNext" type="button" title="Merge this step with the next">↧ Merge</button>
-            <button id="splitStep" type="button" title="Split this step into two">↧ Split</button>
-            <button id="setStepGroup" type="button" title="Assign a group label to this step">▣ Group</button>
-            <button id="savePreset" type="button" title="Save the selected annotation as a preset">★ Preset</button>
-          </div>
-        </div>
-        <div class="canvas-stage">
-          <div id="canvasWrap" class="canvas-wrap">
-            <img id="screenshot" alt="Captured browser state">
-            <div id="annotationLayer"></div>
-            <div id="annotationControls" class="annotation-controls hidden"></div>
-            <div id="emptyCanvas" class="empty-canvas">
-              <div class="empty-icon">◌</div>
-              <strong>Choose a step to start editing</strong>
-              <span>Your captured screenshot and annotations will appear here.</span>
-            </div>
-          </div>
-        </div>
-        <div class="canvas-foot">
-          <span id="canvasMeta">No step selected</span>
-          <span id="shortcutHint">undo · save</span>
-        </div>
-      </section>
-
-      <aside class="properties-panel">
-        <div class="properties-scroll">
-          <div class="panel-head property-title">
-            <div><span class="kicker">PROPERTIES</span><h2>Step details</h2></div>
-            <div class="property-actions">
-              <span id="actionBadge" class="badge">—</span>
-              <button id="deleteStep" class="delete-step" type="button" title="Delete step" aria-label="Delete step">×</button>
-            </div>
-          </div>
-
-          <label class="field-label">Tutorial title
-            <input id="titleInput" placeholder="Name this workflow">
-          </label>
-          <label class="field-label">Tutorial description
-            <textarea id="tutorialDescription" rows="2" placeholder="Short summary shown on the dashboard and exports"></textarea>
-          </label>
-          <label class="field-label">Step description
-            <textarea id="descriptionInput" rows="4" placeholder="Describe what the viewer should do"></textarea>
-          </label>
-
-          <div class="divider"></div>
-          <div class="tool-heading"><span>ANNOTATIONS</span><span id="annotationCount">0</span></div>
-          <div class="annotation-grid">
-            <button data-tool="highlight"><i class="tool-highlight"></i>Highlight</button>
-            <button data-tool="rectangle"><i class="tool-rect"></i>Rectangle</button>
-            <button data-tool="circle"><i class="tool-circle"></i>Circle</button>
-            <button data-tool="arrow"><i class="tool-arrow">↗</i>Arrow</button>
-            <button data-tool="text"><i class="tool-text">T</i>Text</button>
-            <button data-tool="blur"><i class="tool-blur"></i>Blur</button>
-            <button data-tool="redaction"><i class="tool-redact"></i>Redact</button>
-            <button data-tool="spotlight"><i class="tool-spot"></i>Spotlight</button>
-            <button data-tool="marker"><i class="tool-marker">1</i>Marker</button>
-          </div>
-
-          <div id="presetLibrary" class="preset-library">
-            <div class="tool-heading"><span>PRESETS</span><span id="presetCount">0</span></div>
-            <div id="presetList" class="preset-list">
-              <div class="preset-empty">Save an annotation as a preset to reuse it later.</div>
-            </div>
-          </div>
-
-          <div id="selectedAnnotation" class="annotation-properties hidden">
-            <div class="tool-heading">
-              <span>SELECTED ANNOTATION</span>
-              <span id="annotationTypeHint">ANNOTATION</span>
-              <button id="deleteAnnotation" type="button">Delete</button>
-            </div>
-
-            <div class="control-grid">
-              <label class="field-label">X<input id="annX" type="number" step="1"></label>
-              <label class="field-label">Y<input id="annY" type="number" step="1"></label>
-              <label class="field-label" data-common="size">Width<input id="annW" type="number" min="8" step="1"></label>
-              <label class="field-label" data-common="size">Height<input id="annH" type="number" min="8" step="1"></label>
-              <label class="field-label" data-common="rotation">Rotation<input id="annRotation" type="number" step="1"><small>degrees</small></label>
-              <label class="field-label">Opacity<input id="opacityInput" type="range" min="0" max="1" step="0.05"></label>
-            </div>
-
-            <div class="control-section" data-for="highlight rectangle circle arrow marker spotlight redaction">
-              <label class="field-label">Color<input id="annColor" type="color"></label>
-            </div>
-
-            <div class="control-section" data-for="highlight rectangle circle arrow">
-              <label class="field-label">Line width<input id="strokeWidth" type="number" min="1" max="40" step="1"></label>
-            </div>
-
-            <div class="control-section" data-for="rectangle circle">
-              <div class="style-row">
-                <label class="field-label">Fill<input id="fillColor" type="color"></label>
-                <label class="field-label">Fill opacity<input id="fillOpacity" type="range" min="0" max="1" step="0.05"></label>
-              </div>
-            </div>
-
-            <div class="control-section" data-for="arrow">
-              <div class="style-row">
-                <label class="field-label">Arrow head<input id="arrowHeadSize" type="number" min="4" max="40" step="1"></label>
-                <label class="field-label">Line cap
-                  <select id="arrowCap">
-                    <option value="round">Round</option>
-                    <option value="square">Square</option>
-                    <option value="butt">Butt</option>
-                  </select>
-                </label>
-              </div>
-            </div>
-
-            <div class="control-section" data-for="blur">
-              <label class="field-label">Blur strength<input id="blurAmount" type="range" min="0" max="40" step="1"></label>
-            </div>
-
-            <div class="control-section" data-for="text">
-              <label class="field-label">Text<input id="annotationText" placeholder="Add a note"></label>
-              <div class="style-row">
-                <label class="field-label">Text color<input id="textColor" type="color"></label>
-                <label class="field-label">Background<input id="textBackground" type="color"></label>
-              </div>
-              <div class="style-row">
-                <label class="field-label">Font size<input id="fontSize" type="number" min="8" max="96" step="1"></label>
-                <label class="field-label">Weight
-                  <select id="fontWeight">
-                    <option value="400">Regular</option>
-                    <option value="500">Medium</option>
-                    <option value="600">Semibold</option>
-                    <option value="700">Bold</option>
-                    <option value="800">Extra bold</option>
-                  </select>
-                </label>
-              </div>
-            </div>
-
-            <div class="control-section" data-for="marker">
-              <label class="field-label">Label<input id="markerLabel" maxlength="3" placeholder="1"></label>
-            </div>
-          </div>
-
-          <div class="divider"></div>
-          <div class="privacy-callout">
-            <span>◆</span>
-            <div>
-              <strong>Privacy export</strong>
-              <p>Blur and redaction are flattened into exported images so hidden content cannot be recovered.</p>
-            </div>
-          </div>
-        </div>
-      </aside>
-    </main>
-
-    <button class="properties-toggle" type="button" aria-label="Toggle properties panel" title="Toggle properties">☰</button>
-
-    <dialog id="exportDialog">
-      <div class="dialog-card">
-        <button class="dialog-close">×</button>
-        <span class="kicker">EXPORT TUTORIAL</span>
-        <h2>Choose a format</h2>
-        <p>Your annotations and privacy treatments will be included where supported.</p>
-        <div class="export-grid">
-          <button data-export="json"><strong>JSON</strong><span>Full editable data</span></button>
-          <button data-export="markdown"><strong>Markdown</strong><span>Images and steps</span></button>
-          <button data-export="html"><strong>Standalone HTML</strong><span>Shareable offline page</span></button>
-          <button data-export="png"><strong>PNG</strong><span>Current annotated step</span></button>
-          <button data-export="print"><strong>PDF / Print</strong><span>Readable document</span></button>
-          <button data-export="gif"><strong>GIF</strong><span>Animated steps</span></button>
-          <button data-export="text"><strong>Text</strong><span>Plain-text outline</span></button>
-        </div>
+    <section class="canvas-pane">
+      <div class="tool-bar" role="toolbar" aria-label="Annotation tools">
+        <button class="tool" data-tool="select" title="Select / move (V)">⬉</button>
+        <button class="tool" data-tool="highlight" title="Highlight (1)">▮</button>
+        <button class="tool" data-tool="rectangle" title="Rectangle (2)">▭</button>
+        <button class="tool" data-tool="circle" title="Circle (3)">◯</button>
+        <button class="tool" data-tool="arrow" title="Arrow (4)">➔</button>
+        <button class="tool" data-tool="text" title="Text (5)">T</button>
+        <button class="tool" data-tool="blur" title="Blur (6)">▒</button>
+        <button class="tool" data-tool="redaction" title="Redaction (7)">█</button>
+        <button class="tool" data-tool="spotlight" title="Spotlight (8)">◍</button>
+        <button class="tool" data-tool="marker" title="Numbered marker (9)">➉</button>
+        <span class="tool-sep"></span>
+        <button id="btn-undo" class="btn small" title="Undo">↶</button>
+        <button id="btn-redo" class="btn small" title="Redo">↷</button>
+        <button id="btn-delete-annotation" class="btn small" title="Delete selected annotation">🗑</button>
       </div>
-    </dialog>
+      <div class="style-bar">
+        <div class="swatches" id="swatches"></div>
+        <label class="style-field">Stroke <input id="style-stroke" type="range" min="1" max="16" value="3" /></label>
+        <label class="style-field">Opacity <input id="style-opacity" type="range" min="10" max="100" value="90" /></label>
+        <label class="style-field">Blur <input id="style-blur" type="range" min="2" max="40" value="10" /></label>
+        <label class="style-field">Font <input id="style-font" type="range" min="10" max="48" value="18" /></label>
+        <span class="flex-spacer"></span>
+        <button id="btn-save-preset" class="btn small ghost">Save preset</button>
+        <div id="preset-chips" class="preset-chips"></div>
+      </div>
+      <div id="canvas-wrap" class="canvas-wrap">
+        <canvas id="canvas"></canvas>
+        <input id="text-input" class="text-input hidden" placeholder="Type text, press Enter" />
+        <p id="canvas-empty" class="canvas-empty hidden">This step has no screenshot yet. Recapture or delete it.</p>
+      </div>
+    </section>
 
-    <script type="module" src="editor.js"></script>
-  </body>
+    <aside class="props-pane">
+      <h2>Step <span id="prop-step-number">–</span></h2>
+      <label class="field">Description
+        <textarea id="prop-description" rows="3"></textarea>
+      </label>
+      <label class="field">Page URL
+        <input id="prop-url" type="text" readonly />
+      </label>
+      <div class="field">
+        <span class="field-label">Screenshot</span>
+        <div id="shot-info" class="muted small">–</div>
+        <div class="row">
+          <button id="btn-recapture-viewport" class="btn small">Recapture view</button>
+          <button id="btn-recapture-full" class="btn small">Recapture full page</button>
+        </div>
+        <p class="muted small">Recapture opens the page in a tab for a moment.</p>
+      </div>
+      <h2>Step tools</h2>
+      <div class="row wrap">
+        <button id="btn-crop" class="btn small">Crop</button>
+        <button id="btn-merge" class="btn small">Merge with next</button>
+        <button id="btn-split" class="btn small">Split</button>
+        <button id="btn-duplicate" class="btn small">Duplicate</button>
+        <button id="btn-delete-step" class="btn small danger">Delete step</button>
+      </div>
+    </aside>
+  </main>
+
+  <script type="module" src="editor.js"></script>
+</body>
 </html>

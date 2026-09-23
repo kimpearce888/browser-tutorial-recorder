@@ -1,34 +1,5 @@
-import {
-  escapeHtml,
-  sanitizeImageUrl,
-  canvasSize, annotationBox, withAlpha
-} from "./shared.js";
+import { sanitizeImageUrl, sanitizeFilename } from "./shared.js";
 import { encodeGif } from "./gif-encoder.js";
-import { getSettings } from "./settings-store.js";
-
-function safeName(value) {
-
-  const cleaned = (value || "tutorial")
-    .replace(/[^\p{L}\p{N}]+/gu, "-")
-    .replace(/^[-_]+|[-_]+$/g, "")
-    .slice(0, 100)
-    .toLowerCase();
-  return cleaned || "tutorial";
-}
-
-export function download(name, content, type) {
-
-  name = String(name || "download").replace(/[/\\:*?"<>|]/g, "-").slice(0, 200);
-  const blob = content instanceof Blob ? content : new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = name;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 30000);
-}
 
 export function loadImage(source) {
   return new Promise((resolve, reject) => {
@@ -41,355 +12,267 @@ export function loadImage(source) {
   });
 }
 
-function roundedRect(ctx, x, y, width, height, radius) {
-  const r = Math.min(radius, width / 2, height / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + width, y, x + width, y + height, r);
-  ctx.arcTo(x + width, y + height, x, y + height, r);
-  ctx.arcTo(x, y + height, x, y, r);
-  ctx.arcTo(x, y, x + width, y, r);
-  ctx.closePath();
+function alpha(color, opacity) {
+  const hex = color.replace("#", "");
+  const full = hex.length === 3 ? hex.split("").map((c) => c + c).join("") : hex;
+  const r = parseInt(full.slice(0, 2), 16) || 0;
+  const g = parseInt(full.slice(2, 4), 16) || 0;
+  const b = parseInt(full.slice(4, 6), 16) || 0;
+  const o = Math.max(0, Math.min(1, opacity == null ? 1 : opacity));
+  return `rgba(${r},${g},${b},${o})`;
 }
 
-export async function annotatedCanvas(step) {
-  const image = await loadImage(step.screenshot?.image);
-  const canvas = document.createElement("canvas");
-  canvas.width = image.naturalWidth || canvasSize(step).width;
-  canvas.height = image.naturalHeight || canvasSize(step).height;
-  const ctx = canvas.getContext("2d");
-  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-  drawAnnotations(ctx, image, step);
-  return canvas;
-}
-
-export async function annotatedDataUrl(step, format = "png") {
-  const canvas = await annotatedCanvas(step);
-  if (format === "jpeg") return canvas.toDataURL("image/jpeg", 0.9);
-  return canvas.toDataURL("image/png");
-}
-
-function drawAnnotations(ctx, image, step) {
-  const base = canvasSize(step);
-  const sx = ctx.canvas.width / base.width;
-  const sy = ctx.canvas.height / base.height;
-
-  const annotations = step.annotations || [];
-  const ordered = [
-    ...annotations.filter((a) => a.type !== "spotlight"),
-    ...annotations.filter((a) => a.type === "spotlight")
-  ];
-
-  for (const a of ordered) {
-    const box = annotationBox(a);
-    const x = box.x * sx;
-    const y = box.y * sy;
-    const width = box.width * sx;
-    const height = box.height * sy;
-    const rotation = Number(a.rotation || 0) * Math.PI / 180;
-
-    ctx.save();
-    ctx.globalAlpha = Number(a.opacity ?? 1);
-    ctx.translate(x + width / 2, y + height / 2);
-    ctx.rotate(rotation);
-
-    if (a.type === "arrow") drawArrow(ctx, a, width, height);
-    else if (a.type === "blur") drawBlur(ctx, image, x, y, -width / 2, -height / 2, width, height, Number(a.blur || 10));
-    else if (a.type === "redaction") {
-      ctx.fillStyle = a.color || "#202b40";
-      ctx.fillRect(-width / 2, -height / 2, width, height);
-    } else if (a.type === "spotlight") {
-      const overlay = document.createElement("canvas");
-      overlay.width = ctx.canvas.width;
-      overlay.height = ctx.canvas.height;
-      const octx = overlay.getContext("2d");
-      octx.setTransform(ctx.getTransform());
-      octx.fillStyle = withAlpha(a.color || "#172238", a.opacity ?? 0.78);
-      octx.fillRect(-ctx.canvas.width, -ctx.canvas.height, ctx.canvas.width * 2, ctx.canvas.height * 2);
-      octx.globalCompositeOperation = "destination-out";
-      octx.fillStyle = "#000";
-      octx.fillRect(-width / 2, -height / 2, width, height);
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.globalAlpha = 1;
-      ctx.drawImage(overlay, 0, 0);
-    } else if (a.type === "marker") {
-      ctx.fillStyle = a.color || "#ff7352";
-      ctx.beginPath();
-      ctx.arc(0, 0, Math.min(width, height) / 2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#fff";
-      ctx.font = `700 ${Math.max(10, Math.min(width, height) * 0.38)}px system-ui`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(String(a.label || ""), 0, 0);
-    } else if (a.type === "text") {
-      ctx.fillStyle = a.background || "#202b40";
-      roundedRect(ctx, -width / 2, -height / 2, width, height, 6 * sx);
-      ctx.fill();
-      ctx.fillStyle = a.textColor || "#fff";
-      const fontSize = Math.max(8, Number(a.fontSize || 22) * sx);
-      ctx.font = `${a.fontWeight || 700} ${fontSize}px system-ui`;
-      ctx.textAlign = "left";
-      ctx.textBaseline = "top";
-      const maxTextWidth = width - 24 * sx;
-      const text = String(a.text || "Add a note").slice(0, 500);
-      const words = text.split(" ");
-      let line = "";
-      let lineY = -height / 2 + 10 * sy;
-      const lineHeight = fontSize * 1.3;
-      for (const word of words) {
-        const testLine = line ? line + " " + word : word;
-        const metrics = ctx.measureText(testLine);
-        if (metrics.width > maxTextWidth && line) {
-          ctx.fillText(line, -width / 2 + 12 * sx, lineY);
-          line = word;
-          lineY += lineHeight;
-          if (lineY + lineHeight > height / 2) { line = ""; break; }
-        } else {
-          line = testLine;
-        }
-      }
-      if (line && lineY + lineHeight <= height / 2) ctx.fillText(line, -width / 2 + 12 * sx, lineY);
-    } else {
-      drawShape(ctx, a, width, height, sx);
-    }
-
-    ctx.restore();
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = "source-over";
-  }
-}
-
-function drawShape(ctx, a, width, height, sx) {
-  const stroke = a.color || "#4779f4";
-  if (Number(a.fillOpacity || 0) > 0) {
-    ctx.globalAlpha = (a.opacity ?? 1) * Number(a.fillOpacity);
-    ctx.fillStyle = a.fillColor || stroke;
-    if (a.type === "circle") {
-      ctx.beginPath();
-      ctx.ellipse(0, 0, width / 2, height / 2, 0, 0, Math.PI * 2);
-      ctx.fill();
-    } else {
-      ctx.fillRect(-width / 2, -height / 2, width, height);
-    }
-    ctx.globalAlpha = a.opacity ?? 1;
-  }
-  ctx.strokeStyle = stroke;
-  ctx.lineWidth = Math.max(1, Number(a.strokeWidth || 4) * sx);
-  if (a.type === "circle") {
-    ctx.beginPath();
-    ctx.ellipse(0, 0, width / 2, height / 2, 0, 0, Math.PI * 2);
-    ctx.stroke();
-  } else {
-    roundedRect(ctx, -width / 2, -height / 2, width, height, a.type === "highlight" ? 6 * sx : 3 * sx);
-    ctx.stroke();
-    if (a.type === "highlight") {
-      ctx.globalAlpha = (a.opacity ?? 1) * 0.12;
-      ctx.fillStyle = stroke;
-      ctx.fill();
-    }
-  }
-}
-
-function drawArrow(ctx, a, width, height) {
-  const x1 = width * Number(a.startX ?? 0) / 100 - width / 2;
-  const y1 = height * Number(a.startY ?? 0) / 100 - height / 2;
-  const x2 = width * Number(a.endX ?? 100) / 100 - width / 2;
-  const y2 = height * Number(a.endY ?? 100) / 100 - height / 2;
+function drawArrow(ctx, a, scale) {
+  const x1 = a.x * scale, y1 = a.y * scale;
+  const x2 = (a.x2 || a.x + a.w) * scale, y2 = (a.y2 || a.y + a.h) * scale;
   const angle = Math.atan2(y2 - y1, x2 - x1);
-  const head = Math.max(4, Number(a.arrowHeadSize || 14)) * ((width + height) / 2) / 100;
-
-  ctx.strokeStyle = a.color || "#ff7352";
-  ctx.fillStyle = a.color || "#ff7352";
-  ctx.lineWidth = Math.max(1, Number(a.strokeWidth || 5) * ((width + height) / 2) / 100);
-  ctx.lineCap = ["round", "square", "butt"].includes(a.arrowCap) ? a.arrowCap : "round";
-
+  const head = Math.max(10, a.strokeWidth * 4) * scale;
+  ctx.strokeStyle = alpha(a.color, a.opacity);
+  ctx.lineWidth = Math.max(1, a.strokeWidth * scale);
   ctx.beginPath();
   ctx.moveTo(x1, y1);
-  ctx.lineTo(x2, y2);
+  ctx.lineTo(x2 - Math.cos(angle) * head * 0.6, y2 - Math.sin(angle) * head * 0.6);
   ctx.stroke();
-
-  const spread = Math.PI / 6;
+  ctx.fillStyle = alpha(a.color, a.opacity);
   ctx.beginPath();
   ctx.moveTo(x2, y2);
-  ctx.lineTo(x2 - head * Math.cos(angle - spread), y2 - head * Math.sin(angle - spread));
-  ctx.lineTo(x2 - head * Math.cos(angle + spread), y2 - head * Math.sin(angle + spread));
+  ctx.lineTo(x2 - Math.cos(angle - Math.PI / 7) * head, y2 - Math.sin(angle - Math.PI / 7) * head);
+  ctx.lineTo(x2 - Math.cos(angle + Math.PI / 7) * head, y2 - Math.sin(angle + Math.PI / 7) * head);
   ctx.closePath();
   ctx.fill();
 }
 
-function drawBlur(ctx, image, srcX, srcY, x, y, width, height, amount) {
-  const pad = Math.max(12, amount * 2);
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(x, y, width, height);
-  ctx.clip();
-  ctx.filter = `blur(${amount}px)`;
-  ctx.drawImage(
-    image,
-    srcX - pad, srcY - pad, width + pad * 2, height + pad * 2,
-    x - pad, y - pad, width + pad * 2, height + pad * 2
+function drawBlur(ctx, image, a, scale) {
+  const pad = a.blur * scale;
+  const x = Math.max(0, a.x * scale - pad);
+  const y = Math.max(0, a.y * scale - pad);
+  const w = Math.min(ctx.canvas.width - x, a.w * scale + pad * 2);
+  const h = Math.min(ctx.canvas.height - y, a.h * scale + pad * 2);
+  if (w <= 0 || h <= 0) return;
+  const temp = document.createElement("canvas");
+  temp.width = Math.max(1, Math.round(w));
+  temp.height = Math.max(1, Math.round(h));
+  const tctx = temp.getContext("2d");
+  tctx.filter = `blur(${Math.max(2, a.blur * scale * 0.5)}px)`;
+  tctx.drawImage(image, x, y, w, h, 0, 0, temp.width, temp.height);
+  ctx.drawImage(temp, x, y);
+}
+
+function drawSpotlight(ctx, a, scale) {
+  const overlay = document.createElement("canvas");
+  overlay.width = ctx.canvas.width;
+  overlay.height = ctx.canvas.height;
+  const octx = overlay.getContext("2d");
+  octx.fillStyle = alpha(a.color, a.opacity);
+  octx.fillRect(0, 0, overlay.width, overlay.height);
+  octx.globalCompositeOperation = "destination-out";
+  octx.beginPath();
+  octx.ellipse(
+    (a.x + a.w / 2) * scale, (a.y + a.h / 2) * scale,
+    Math.max(2, (a.w / 2) * scale), Math.max(2, (a.h / 2) * scale),
+    0, 0, Math.PI * 2
   );
-  ctx.restore();
+  octx.fill();
+  ctx.drawImage(overlay, 0, 0);
 }
 
-async function exportGif(tutorial) {
-  const steps = tutorial.steps.filter((step) => step.screenshot?.image);
-  if (!steps.length) throw new Error("There are no screenshots to export.");
-  const perFrameBytes = (w, h) => (w | 0) * (h | 0) * 4;
-  let maxFrameBytes = 1280 * 720 * 4;
-  for (const step of steps) {
-    const w = Number(step.screenshot?.width) || 1280;
-    const h = Number(step.screenshot?.height) || 720;
-    const b = perFrameBytes(w, h);
-    if (b > maxFrameBytes) maxFrameBytes = b;
-  }
-  const estimatedBytes = steps.length * maxFrameBytes * 2;
-  const MEM_LIMIT = 250 * 1024 * 1024;
-  if (estimatedBytes > MEM_LIMIT) {
-    throw new Error(`GIF export would use ~${Math.round(estimatedBytes / 1024 / 1024)} MB of memory (based on actual screenshot dimensions). Try fewer steps or smaller screenshots.`);
-  }
-  const { gifSpeed } = await getSettings();
-
-  const sourceCanvases = [];
-  for (let i = 0; i < steps.length; i++) {
-    sourceCanvases.push(await annotatedCanvas(steps[i]));
-    if (i % 3 === 0) await new Promise((r) => setTimeout(r, 0));
-  }
-
-  const first = sourceCanvases[0];
-  const targetWidth = Math.max(64, first.width);
-  const targetHeight = Math.max(64, first.height);
-
-  const frames = [];
-  for (let i = 0; i < sourceCanvases.length; i++) {
-    const canvas = sourceCanvases[i];
-    const out = document.createElement("canvas");
-    out.width = targetWidth;
-    out.height = targetHeight;
-    const ctx = out.getContext("2d");
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, targetWidth, targetHeight);
-    const scale = Math.min(targetWidth / canvas.width, targetHeight / canvas.height);
-    const w = canvas.width * scale;
-    const h = canvas.height * scale;
-    ctx.drawImage(canvas, (targetWidth - w) / 2, (targetHeight - h) / 2, w, h);
-    const { data } = ctx.getImageData(0, 0, targetWidth, targetHeight);
-    frames.push({
-      width: targetWidth,
-      height: targetHeight,
-      rgba: new Uint8Array(data.buffer.slice(0)),
-      delayMs: gifSpeed ?? 1200
-    });
-    if (i % 2 === 0) await new Promise((r) => setTimeout(r, 0));
-  }
-
-  const blob = await encodeGif(frames, { loop: true });
-  download(`${safeName(tutorial.title)}.gif`, blob, "image/gif");
+function drawMarker(ctx, a, scale) {
+  const r = 13 * scale;
+  const cx = a.x * scale, cy = a.y * scale;
+  ctx.fillStyle = alpha(a.color, a.opacity);
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.font = `bold ${Math.round(r)}px system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(String(a.number || 1), cx, cy + 1);
 }
 
-function exportText(tutorial) {
-  const lines = [];
-  lines.push(tutorial.title || "Untitled tutorial");
-  lines.push("=".repeat(Math.max(8, (tutorial.title || "Untitled tutorial").length)));
-  if (tutorial.description) lines.push(tutorial.description);
-  lines.push("");
-  tutorial.steps.forEach((step, index) => {
-    lines.push(`${index + 1}. ${step.description || step.action || "Step"}`);
-    if (step.target?.text) lines.push(`   Element: ${step.target.text}`);
-    if (step.frame?.url) lines.push(`   URL: ${step.frame.url}`);
-  });
-  download(`${safeName(tutorial.title)}.txt`, lines.join("\n"), "text/plain");
-}
-
-async function exportTutorial(tutorial, kind, selectedStepIndex) {
-  const name = safeName(tutorial.title);
-
-  if (kind === "json") {
-    download(`${name}.json`, JSON.stringify(tutorial, null, 2), "application/json");
-    return;
-  }
-
-  if (kind === "png") {
-    const step = tutorial.steps[selectedStepIndex];
-    if (!step) throw new Error("Select a step before exporting PNG.");
-    const canvas = await annotatedCanvas(step);
-    await new Promise((resolve, reject) => {
-      canvas.toBlob((blob) => {
-        if (blob) {
-          download(`${name}-step-${step.number}.png`, blob, "image/png");
-          resolve();
-        } else {
-          reject(new Error("Could not encode PNG."));
+export function drawAnnotations(ctx, annotations, scale = 1) {
+  for (const a of annotations || []) {
+    ctx.save();
+    switch (a.type) {
+      case "highlight":
+        ctx.fillStyle = alpha(a.color, (a.opacity == null ? 1 : a.opacity) * 0.35);
+        ctx.fillRect(a.x * scale, a.y * scale, a.w * scale, a.h * scale);
+        break;
+      case "rectangle":
+        ctx.strokeStyle = alpha(a.color, a.opacity);
+        ctx.lineWidth = Math.max(1, a.strokeWidth * scale);
+        ctx.strokeRect(a.x * scale, a.y * scale, a.w * scale, a.h * scale);
+        break;
+      case "circle":
+        ctx.strokeStyle = alpha(a.color, a.opacity);
+        ctx.lineWidth = Math.max(1, a.strokeWidth * scale);
+        ctx.beginPath();
+        ctx.ellipse((a.x + a.w / 2) * scale, (a.y + a.h / 2) * scale,
+          Math.max(1, Math.abs(a.w / 2) * scale), Math.max(1, Math.abs(a.h / 2) * scale), 0, 0, Math.PI * 2);
+        ctx.stroke();
+        break;
+      case "arrow":
+        drawArrow(ctx, a, scale);
+        break;
+      case "text":
+        ctx.fillStyle = alpha(a.color, a.opacity);
+        ctx.font = `${a.fontSize * scale}px system-ui, sans-serif`;
+        ctx.textBaseline = "top";
+        for (const [i, line] of (a.text || "").split("\n").entries()) {
+          ctx.fillText(line, a.x * scale, (a.y + i * a.fontSize * 1.3) * scale);
         }
-      }, "image/png");
-    });
-    return;
-  }
-
-  if (kind === "print" || kind === "pdf") {
-    const popup = window.open(`print-export.html?id=${encodeURIComponent(tutorial.id)}`, "_blank");
-    if (!popup) throw new Error("Popup blocked. Allow popups for this site to export PDF.");
-    return;
-  }
-
-  if (kind === "gif") {
-    await exportGif(tutorial);
-    return;
-  }
-
-  if (kind === "text") {
-    exportText(tutorial);
-    return;
-  }
-
-  if (kind === "markdown") {
-    const escapeMd = (text) => String(text || "")
-      .replace(/([\\`*_{}\[\]()#+!|>])/g, "\\$1")
-      .replace(/\r?\n/g, " ");
-    const parts = [];
-    for (const step of tutorial.steps) {
-      const image = step.screenshot?.image ? await annotatedDataUrl(step) : "";
-      parts.push(`## Step ${step.number}\n\n${escapeMd(step.description)}\n\n${image ? `![Step ${step.number}](${image})` : ""}`);
+        break;
+      case "blur":
+        drawBlur(ctx, ctx.canvas.__btrImage, a, scale);
+        break;
+      case "redaction":
+        ctx.fillStyle = alpha(a.color, 1);
+        ctx.fillRect(a.x * scale, a.y * scale, a.w * scale, a.h * scale);
+        break;
+      case "spotlight":
+        drawSpotlight(ctx, a, scale);
+        break;
+      case "marker":
+        drawMarker(ctx, a, scale);
+        break;
     }
-    download(`${name}.md`, `# ${escapeMd(tutorial.title)}\n\n${escapeMd(tutorial.description)}\n\n${parts.join("\n\n")}`, "text/markdown");
-    return;
+    ctx.restore();
   }
+}
 
-  if (kind === "html") {
-    const parts = [];
-    for (const step of tutorial.steps) {
-      const image = step.screenshot?.image ? await annotatedDataUrl(step) : "";
-      parts.push(`<article><h2>Step ${step.number}</h2><p>${escapeHtml(step.description || "")}</p>${image ? `<img src="${image}" alt="Step ${step.number}">` : ""}</article>`);
+export async function annotatedCanvas(step, maxWidth = 0) {
+  const image = await loadImage(step.screenshot && step.screenshot.image);
+  const canvas = document.createElement("canvas");
+  canvas.__btrImage = image;
+  let scale = 1;
+  if (maxWidth > 0 && image.naturalWidth > maxWidth) {
+    scale = maxWidth / image.naturalWidth;
+  }
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  drawAnnotations(ctx, step.annotations, scale);
+  return canvas;
+}
+
+export function scaleForStep(step, image) {
+  const cssW = step.screenshot && step.screenshot.width;
+  return cssW > 0 ? image.naturalWidth / cssW : 1;
+}
+
+function escapeHtml(s) {
+  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+export async function exportTutorial(tutorial, kind, options = {}) {
+  const name = sanitizeFilename(tutorial.title, "tutorial");
+  switch (kind) {
+    case "json": {
+      const blob = new Blob([JSON.stringify(tutorial, null, 2)], { type: "application/json" });
+      downloadBlob(`${name}.json`, blob);
+      return;
     }
-    const html = `<!doctype html>
-<meta charset="utf-8">
+    case "text": {
+      const lines = [tutorial.title, "=".repeat(tutorial.title.length), ""];
+      tutorial.steps.forEach((s) => lines.push(`${s.number}. ${s.description}`, ""));
+      downloadBlob(`${name}.txt`, new Blob([lines.join("\n")], { type: "text/plain" }));
+      return;
+    }
+    case "markdown": {
+      const lines = [`# ${tutorial.title}`, ""];
+      for (const s of tutorial.steps) {
+        lines.push(`## ${s.number}. ${s.description}`);
+        if (s.screenshot && s.screenshot.image) lines.push("", `![Step ${s.number}](${s.screenshot.image})`);
+        lines.push("");
+      }
+      downloadBlob(`${name}.md`, new Blob([lines.join("\n")], { type: "text/markdown" }));
+      return;
+    }
+    case "png": {
+      const step = tutorial.steps[options.selectedStepIndex];
+      if (!step) throw new Error("Select a step before exporting PNG.");
+      const canvas = await annotatedCanvas(step);
+      const blob = await canvasToBlob(canvas, "image/png");
+      downloadBlob(`${name}-step-${step.number}.png`, blob);
+      return;
+    }
+    case "html": {
+      const parts = [];
+      for (const s of tutorial.steps) {
+        const canvas = await annotatedCanvas(s);
+        parts.push({ step: s, dataUrl: canvas.toDataURL("image/png") });
+      }
+      const html = buildStandaloneHtml(tutorial, parts);
+      downloadBlob(`${name}.html`, new Blob([html], { type: "text/html" }));
+      return;
+    }
+    case "gif": {
+      const frames = [];
+      const maxWidth = options.gifMaxWidth || 800;
+      for (const s of tutorial.steps) {
+        if (!s.screenshot || !s.screenshot.image) continue;
+        frames.push(await annotatedCanvas(s, maxWidth));
+      }
+      if (!frames.length) throw new Error("No screenshots to export as GIF.");
+      const blob = encodeGif(frames, options.gifFrameDelayMs || 500);
+      downloadBlob(`${name}.gif`, blob);
+      return;
+    }
+    case "pdf":
+    case "print": {
+      const popup = window.open(`print-export.html?id=${encodeURIComponent(tutorial.id)}`, "_blank");
+      if (!popup) throw new Error("Popup blocked. Allow popups for this site to export PDF.");
+      return;
+    }
+    default:
+      throw new Error(`Unknown export format: ${kind}`);
+  }
+}
+
+function buildStandaloneHtml(tutorial, parts) {
+  const stepsHtml = parts.map(({ step, dataUrl }) => `
+    <section class="step">
+      <h2><span class="num">${step.number}</span> ${escapeHtml(step.description)}</h2>
+      ${dataUrl ? `<img src="${dataUrl}" alt="Step ${step.number}" loading="lazy" />` : "<p class='missing'>Screenshot unavailable.</p>"}
+      ${step.url ? `<p class="url">${escapeHtml(step.url)}</p>` : ""}
+    </section>`).join("\n");
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(tutorial.title)}</title>
 <style>
-  body{font:16px system-ui;max-width:980px;margin:40px auto;padding:0 20px;color:#202b40;background:#fff}
-  img{max-width:100%;height:auto;border-radius:12px;box-shadow:0 8px 30px #22304422}
-  article{margin:35px 0;page-break-inside:avoid}
-  h1{font-size:28px;margin:0 0 8px}
-  .toolbar{position:sticky;top:0;background:#fff;padding:12px 0;border-bottom:1px solid #eef1f5;margin-bottom:24px;display:flex;gap:8px;z-index:10}
-  .toolbar button{border:1px solid #d4dae4;background:#fff;border-radius:8px;padding:8px 16px;font:600 12px system-ui;cursor:pointer;color:#202b40}
-  .toolbar button:hover{background:#f6f8fb}
-  @media print{.toolbar{display:none}}
-  @media (prefers-color-scheme:dark){
-    body{background:#1a1f2e;color:#e8ecf4}
-    .toolbar{background:#1a1f2e;border-color:#363d52}
-    .toolbar button{background:#252b3d;border-color:#363d52;color:#e8ecf4}
-    .toolbar button:hover{background:#2d3346}
-  }
+  body{font:16px/1.6 system-ui,sans-serif;max-width:860px;margin:0 auto;padding:32px 20px;color:#1c2733;background:#f6f7f9}
+  h1{font-size:26px} .step{background:#fff;border:1px solid #e3e7ec;border-radius:12px;padding:18px;margin:18px 0;box-shadow:0 1px 3px rgba(16,24,40,.06)}
+  .step img{max-width:100%;border-radius:8px;border:1px solid #e3e7ec}
+  .num{display:inline-block;background:#ff5b45;color:#fff;border-radius:50%;width:26px;height:26px;text-align:center;line-height:26px;font-size:14px;margin-right:8px}
+  .url{color:#5c6b7a;font-size:12.5px;word-break:break-all}
+  .missing{color:#a24;}
 </style>
+</head>
+<body>
 <h1>${escapeHtml(tutorial.title)}</h1>
 <p>${escapeHtml(tutorial.description || "")}</p>
-<div class="toolbar">
-  <button onclick="window.print()">Print / Save as PDF</button>
-</div>
-${parts.join("")}`;
-    download(`${name}.html`, html, "text/html");
-  }
+${stepsHtml}
+</body>
+</html>`;
 }
 
-export { exportTutorial, exportGif, exportText, safeName };
+export function canvasToBlob(canvas, type) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Canvas encoding failed."))), type);
+  });
+}
+
+export function downloadBlob(name, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}

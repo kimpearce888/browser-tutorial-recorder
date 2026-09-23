@@ -1,547 +1,170 @@
-import { $, escapeHtml, escapeAttr, sanitizeImageUrl, dbPut, normalizeTutorial } from "./shared.js";
-import { exportTutorial } from "./exporter.js";
-import { initTheme } from "./settings-store.js";
+import { bgCall } from "./common-ui.js";
 
-let tutorials = [];
+const els = {
+  list: document.getElementById("list"),
+  empty: document.getElementById("empty"),
+  search: document.getElementById("search"),
+  sort: document.getElementById("sort"),
+  viewToggle: document.getElementById("view-toggle"),
+  bulkbar: document.getElementById("bulkbar"),
+  bulkCount: document.getElementById("bulk-count"),
+  bulkExport: document.getElementById("bulk-export"),
+  bulkDelete: document.getElementById("bulk-delete"),
+  bulkClear: document.getElementById("bulk-clear")
+};
+
+let summaries = [];
 let selected = new Set();
-let viewMode = "grid";
-let activeExportId = null;
+let listView = false;
 
-const searchInput = $("searchInput");
-const statusFilter = $("statusFilter");
-const sortBy = $("sortBy");
-
-function send(type, payload = {}, callback) {
-  chrome.runtime.sendMessage({ type, ...payload }, callback);
+function debounce(fn, ms) {
+  let t = null;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
-function formatDate(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  const now = new Date();
-  const diff = (now - date) / 1000;
-  if (diff < 60) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} h ago`;
-  if (diff < 604800) return `${Math.floor(diff / 86400)} d ago`;
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+async function load() {
+  const res = await bgCall({ type: "GET_SUMMARIES" });
+  summaries = res.summaries || [];
+  render();
 }
 
-function totalAnnotations(tutorial) {
-
-  const steps = Array.isArray(tutorial.steps) ? tutorial.steps : [];
-  return steps.reduce((sum, step) => sum + (step.annotationCount ?? (step.annotations?.length || 0)), 0);
-}
-
-function firstScreenshot(tutorial) {
-
-  const steps = Array.isArray(tutorial.steps) ? tutorial.steps : [];
-  const step = steps.find((s) => s.screenshot?.image);
-  return step?.screenshot?.image || "";
-}
-
-function visibleTutorials() {
-  const query = searchInput.value.trim().toLowerCase();
-  const status = statusFilter.value;
-
-  let list = tutorials.filter((t) => {
-    if (status && t.status !== status) return false;
-    if (!query) return true;
-    const haystack = [
-      t.title,
-      t.description,
-
-      ...(Array.isArray(t.steps) ? t.steps.map((s) => s.description || "") : []),
-      ...(Array.isArray(t.steps) ? t.steps.map((s) => s.action || "") : [])
-    ].join(" ").toLowerCase();
-    return haystack.includes(query);
+function filtered() {
+  const q = els.search.value.trim().toLowerCase();
+  let out = summaries.filter((s) =>
+    !q || s.title.toLowerCase().includes(q) || (s.description || "").toLowerCase().includes(q)
+  );
+  const [key, dir] = els.sort.value.split("-");
+  const mul = dir === "asc" ? 1 : -1;
+  out = out.slice().sort((a, b) => {
+    if (key === "title") return a.title.localeCompare(b.title) * mul;
+    if (key === "steps") return (a.stepCount - b.stepCount) * mul;
+    return ((a.updatedAt || 0) - (b.updatedAt || 0)) * mul;
   });
-
-  const sort = sortBy.value;
-  list = list.slice().sort((a, b) => {
-    if (sort === "title") return (a.title || "").localeCompare(b.title || "");
-
-    if (sort === "steps") return (Array.isArray(b.steps) ? b.steps.length : 0) - (Array.isArray(a.steps) ? a.steps.length : 0);
-    if (sort === "created") return new Date(b.createdAt) - new Date(a.createdAt);
-    return new Date(b.updatedAt) - new Date(a.updatedAt);
-  });
-
-  return list;
+  return out;
 }
 
-function renderStats() {
-  const total = tutorials.length;
-
-  const steps = tutorials.reduce((sum, t) => sum + (Array.isArray(t.steps) ? t.steps.length : 0), 0);
-  const annotations = tutorials.reduce((sum, t) => sum + totalAnnotations(t), 0);
-  const ready = tutorials.filter((t) => t.status === "ready").length;
-
-  $("stats").innerHTML = `
-    <div class="stat-card">
-      <div class="label">TUTORIALS</div>
-      <div class="value">${total}</div>
-    </div>
-    <div class="stat-card">
-      <div class="label">TOTAL STEPS</div>
-      <div class="value">${steps}</div>
-    </div>
-    <div class="stat-card">
-      <div class="label">ANNOTATIONS</div>
-      <div class="value">${annotations}</div>
-    </div>
-    <div class="stat-card">
-      <div class="label">READY TO SHARE</div>
-      <div class="value">${ready}<small>/ ${total}</small></div>
-    </div>`;
+function dateLabel(ms) {
+  if (!ms) return "";
+  const d = new Date(ms);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) +
+    " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
-function renderGrid() {
-  const list = visibleTutorials();
-  const grid = $("grid");
+function render() {
+  const items = filtered();
+  els.list.classList.toggle("list-view", listView);
+  els.list.innerHTML = "";
+  els.empty.classList.toggle("hidden", items.length > 0);
 
-  $("empty").classList.toggle("hidden", tutorials.length > 0);
-  $("noResults").classList.toggle("hidden", tutorials.length === 0 || list.length > 0);
-  grid.classList.toggle("hidden", list.length === 0);
+  for (const s of items) {
+    const card = document.createElement("article");
+    card.className = "tut-card";
+    if (listView) card.classList.add("list-view");
 
-  grid.classList.toggle("list-view", viewMode === "list");
-  grid.innerHTML = list.map(cardHtml).join("");
-
-  wireCards();
-  updateBulkBar();
-}
-
-function cardHtml(tutorial) {
-  const thumb = firstScreenshot(tutorial);
-  const isReady = tutorial.status === "ready";
-  const selectedClass = selected.has(tutorial.id) ? "selected" : "";
-  const checked = selected.has(tutorial.id) ? "✓" : "";
-
-  return `
-    <article class="card ${selectedClass}" data-id="${escapeHtml(tutorial.id)}">
-      <div class="card-check" data-action="select">${checked}</div>
-      <div class="thumb" data-action="open">
-        ${thumb ? `<img src="${escapeAttr(sanitizeImageUrl(thumb))}" alt="">` : `<div class="thumb-empty">◌</div>`}
-        <span class="thumb-badge ${isReady ? "ready" : ""}">${escapeHtml(tutorial.status || "draft")}</span>
-      </div>
-      <div class="card-body">
-        <div class="card-title" data-action="open" title="${escapeHtml(tutorial.title)}">
-          ${escapeHtml(tutorial.title || "Untitled tutorial")}
-        </div>
-        <div class="card-meta">
-          <span>${Array.isArray(tutorial.steps) ? tutorial.steps.length : 0} steps</span>
-          <span>· ${formatDate(tutorial.updatedAt)}</span>
-        </div>
-        <div class="card-desc">${escapeHtml(tutorial.description || "Captured browser workflow")}</div>
-        <div class="card-actions">
-          <button data-action="edit">✎ Edit</button>
-          <button data-action="preview">▶ Preview</button>
-          <button data-action="duplicate">⧉ Duplicate</button>
-          <button data-action="export" class="more">Export ⌄</button>
-          <button data-action="delete" class="danger">🗑</button>
-        </div>
-      </div>
-    </article>`;
-}
-
-function wireCards() {
-  document.querySelectorAll(".card").forEach((card) => {
-    const id = card.dataset.id;
-    card.querySelectorAll("[data-action]").forEach((el) => {
-      el.addEventListener("click", (event) => {
-        event.stopPropagation();
-        handleCardAction(id, el.dataset.action, card, event);
-      });
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = selected.has(s.id);
+    checkbox.setAttribute("aria-label", `Select ${s.title}`);
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) selected.add(s.id); else selected.delete(s.id);
+      updateBulkbar();
     });
-  });
-}
+    card.appendChild(checkbox);
 
-function handleCardAction(id, action, card, event) {
-  switch (action) {
-    case "select":
-      toggleSelect(id);
-      break;
-    case "open":
-    case "edit":
-      openEditor(id);
-      break;
-    case "preview":
-      openPreview(id);
-      break;
-    case "duplicate":
-      duplicateTutorial(id);
-      break;
-    case "export":
-      toggleExportMenu(id, card);
-      break;
-    case "delete":
-      deleteTutorial(id);
-      break;
+    const thumb = document.createElement("div");
+    thumb.className = "thumb" + (s.thumbnail ? "" : " placeholder");
+    if (s.thumbnail) thumb.style.backgroundImage = `url("${s.thumbnail}")`;
+    card.appendChild(thumb);
+
+    const body = document.createElement("div");
+    body.className = "tut-body";
+
+    const title = document.createElement("div");
+    title.className = "tut-title";
+    title.textContent = s.title;
+    body.appendChild(title);
+
+    const meta = document.createElement("div");
+    meta.className = "tut-meta";
+    const mins = Math.round((s.durationMs || 0) / 60000);
+    meta.innerHTML = `<span>${s.stepCount} steps</span><span>${dateLabel(s.updatedAt)}</span>` +
+      (mins ? `<span>${mins} min</span>` : "");
+    body.appendChild(meta);
+
+    const actions = document.createElement("div");
+    actions.className = "tut-actions";
+    actions.appendChild(actionBtn("Edit", () => openEditor(s.id)));
+    actions.appendChild(actionBtn("Preview", () => openPreview(s.id)));
+    actions.appendChild(actionBtn("Export", () => exportOne(s)));
+    body.appendChild(actions);
+
+    card.appendChild(body);
+    els.list.appendChild(card);
   }
+  updateBulkbar();
 }
 
-function toggleSelect(id) {
-  if (selected.has(id)) selected.delete(id);
-  else selected.add(id);
-  renderGrid();
+function actionBtn(label, onClick) {
+  const btn = document.createElement("button");
+  btn.className = "btn small";
+  btn.textContent = label;
+  btn.addEventListener("click", onClick);
+  return btn;
 }
 
-function clearSelection() {
-  selected.clear();
-  renderGrid();
-}
-
-function updateBulkBar() {
-  const count = selected.size;
-  $("bulkBar").classList.toggle("hidden", count === 0);
-  $("bulkCount").textContent = `${count} selected`;
+function updateBulkbar() {
+  els.bulkbar.classList.toggle("hidden", selected.size === 0);
+  els.bulkCount.textContent = `${selected.size} selected`;
 }
 
 function openEditor(id) {
-  chrome.tabs.create({ url: chrome.runtime.getURL(`editor.html?id=${encodeURIComponent(id)}`) });
+  location.href = `editor.html?id=${encodeURIComponent(id)}`;
 }
 
 function openPreview(id) {
-  chrome.tabs.create({ url: chrome.runtime.getURL(`preview.html?id=${encodeURIComponent(id)}`) });
+  location.href = `preview.html?id=${encodeURIComponent(id)}`;
 }
 
-function duplicateTutorial(id) {
-  send("DUPLICATE_TUTORIAL", { id }, (result) => {
-    if (!result?.ok) return alert(result?.error || "Could not duplicate.");
-    load();
-  });
+function download(name, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 
-function deleteTutorial(id) {
-  const tutorial = tutorials.find((t) => t.id === id);
-  const title = tutorial?.title || "this tutorial";
-  if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
-  send("DELETE_TUTORIAL", { id }, (result) => {
-    if (!result?.ok) return alert(result?.error || "Could not delete.");
-    selected.delete(id);
-    load();
-  });
+async function exportOne(s) {
+  const res = await bgCall({ type: "GET_TUTORIAL", id: s.id });
+  download(`${s.title.replace(/[^\w\u0080-\uffff -]/g, "").trim() || "tutorial"}.json`,
+    new Blob([JSON.stringify(res.tutorial, null, 2)], { type: "application/json" }));
 }
 
-function bulkDelete() {
-  const ids = [...selected];
-  if (!ids.length) return;
-  if (!confirm(`Delete ${ids.length} tutorial${ids.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
-  send("DELETE_TUTORIALS", { ids }, (result) => {
-    if (!result?.ok) return alert(result?.error || "Could not delete.");
-    selected.clear();
-    load();
-  });
-}
-
-function toggleExportMenu(id, card) {
-  const menu = $("exportMenu");
-  if (activeExportId === id) {
-    closeExportMenu();
-    return;
+els.search.addEventListener("input", debounce(render, 200));
+els.sort.addEventListener("change", render);
+els.viewToggle.addEventListener("click", () => {
+  listView = !listView;
+  els.viewToggle.textContent = listView ? "☰ List" : "▦ Grid";
+  render();
+});
+els.bulkClear.addEventListener("click", () => { selected.clear(); render(); });
+els.bulkDelete.addEventListener("click", async () => {
+  if (!selected.size) return;
+  if (!confirm(`Delete ${selected.size} tutorial(s)? This cannot be undone.`)) return;
+  for (const id of [...selected]) {
+    await bgCall({ type: "DELETE_TUTORIAL", id });
   }
-
-  const rect = card.querySelector('[data-action="export"]').getBoundingClientRect();
-  menu.style.top = `${rect.bottom + 6}px`;
-  menu.style.left = `${Math.min(rect.left, window.innerWidth - 220)}px`;
-  menu.classList.remove("hidden");
-  activeExportId = id;
-}
-
-function closeExportMenu() {
-  $("exportMenu").classList.add("hidden");
-  activeExportId = null;
-}
-
-async function exportSingle(format) {
-  const tutorialId = activeExportId;
-  closeExportMenu();
-  if (!tutorialId) return;
-
-  let tutorial = null;
-  try {
-    await new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: "GET_TUTORIAL", id: tutorialId }, (result) => {
-        tutorial = result?.tutorial || null;
-        resolve();
-      });
-    });
-  } catch (_) { tutorial = null; }
-  if (!tutorial) {
-    alert("Could not load the full tutorial for export. Please try again.");
-    return;
-  }
-  try {
-
-    const kind = format === "pdf" ? "print" : format;
-    await exportTutorial(tutorial, kind, 0);
-  } catch (error) {
-    alert(error.message || "Export failed.");
-  }
-}
-
-function openBulkExportDialog() {
-  const count = selected.size;
-  if (!count) return;
-  $("bulkExportCount").textContent = count;
-  $("bulkExportDialog").showModal();
-}
-
-async function bulkExport(format) {
-
-  if (format === "pdf") {
-    $("bulkExportDialog").close();
-    alert("PDF export opens a print dialog — please export tutorials one at a time for PDF.");
-    return;
-  }
-  $("bulkExportDialog").close();
-  const ids = [...selected];
-  const kind = format;
-
-  for (const id of ids) {
-    let tutorial = null;
-    try {
-      await new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type: "GET_TUTORIAL", id }, (result) => {
-          tutorial = result?.tutorial || null;
-          resolve();
-        });
-      });
-    } catch (_) { tutorial = null; }
-    if (!tutorial) continue;
-    try {
-      await exportTutorial(tutorial, kind, 0);
-    } catch (error) {
-      console.warn(`Export failed for ${tutorial.title}:`, error.message);
-    }
-    await new Promise((r) => setTimeout(r, 300));
-  }
-}
-
-function importTutorial() {
-  $("importInput").click();
-}
-
-$("importInput").addEventListener("change", (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = async () => {
-    try {
-
-      const parsed = JSON.parse(reader.result);
-      const list = Array.isArray(parsed) ? parsed : [parsed];
-      let imported = 0;
-      for (const item of list) {
-
-        try {
-          const data = normalizeTutorial(item);
-          data.id = `tutorial-${crypto.randomUUID()}`;
-          data.title = data.title || "Imported tutorial";
-          data.createdAt = new Date().toISOString();
-          data.updatedAt = new Date().toISOString();
-          await dbPut(data);
-          imported++;
-        } catch (e) {
-          console.warn("Failed to import one tutorial:", e.message);
-        }
-      }
-      if (imported === 0) {
-        alert("No valid tutorials found in the file.");
-      }
-      load();
-    } catch (error) {
-      alert(error.message || "Invalid tutorial file.");
-    }
-  };
-  reader.readAsText(file);
-  event.target.value = "";
+  selected.clear();
+  await load();
 });
-
-async function startNewRecording() {
-
-  let excludedDomains = [];
-  try {
-    const result = await chrome.storage.local.get("btr-excluded-domains");
-    excludedDomains = Array.isArray(result?.["btr-excluded-domains"]) ? result["btr-excluded-domains"] : [];
-    if (excludedDomains.length === 0) {
-      const raw = localStorage.getItem("btr-excluded-domains");
-      if (raw) excludedDomains = JSON.parse(raw);
-      if (!Array.isArray(excludedDomains)) excludedDomains = [];
-    }
-  } catch (e) { excludedDomains = []; }
-
-  chrome.tabs.query({ active: true, currentWindow: true }, (currentTabs) => {
-    const extensionUrlRe = /^(chrome-extension|chrome|edge|about|devtools|chrome-untrusted|moz-extension|file):/i;
-    const currentEligible = (currentTabs || []).filter((t) => t.url && !extensionUrlRe.test(t.url));
-    if (currentEligible.length > 0) {
-      const tab = currentEligible[0];
-      send("START_RECORDING", { excludedDomains, tabId: tab.id }, (result) => {
-        if (chrome.runtime.lastError) return alert(chrome.runtime.lastError.message || "The recorder service is unavailable.");
-        if (!result?.ok) return alert(result?.error || "Recording could not start.");
-      });
-      return;
-    }
-
-    chrome.tabs.query({}, (tabs) => {
-    if (chrome.runtime.lastError || !Array.isArray(tabs) || tabs.length === 0) {
-      alert("No tabs found. Open a webpage and try again.");
-      return;
-    }
-
-    chrome.windows.getCurrent((currentWin) => {
-      const currentWindowId = currentWin?.id;
-
-      const extensionUrlRe = /^(chrome-extension|chrome|edge|about|devtools|chrome-untrusted|moz-extension|file):/i;
-      const eligible = tabs
-        .filter((t) => t.url && !extensionUrlRe.test(t.url))
-        .sort((a, b) => {
-
-          if (a.windowId === currentWindowId && b.windowId !== currentWindowId) return -1;
-          if (a.windowId !== currentWindowId && b.windowId === currentWindowId) return 1;
-
-          if (a.active && !b.active) return -1;
-          if (!a.active && b.active) return 1;
-          return (b.lastAccessed || 0) - (a.lastAccessed || 0);
-        });
-
-    if (eligible.length === 0) {
-
-      chrome.tabs.create({ url: "https://www.google.com/" }, (newTab) => {
-        setTimeout(() => {
-
-          send("START_RECORDING", { excludedDomains, tabId: newTab.id }, (result) => {
-            if (chrome.runtime.lastError) return alert(chrome.runtime.lastError.message || "The recorder service is unavailable.");
-            if (!result?.ok) return alert(result?.error || "Recording could not start.");
-          });
-        }, 1500);
-      });
-      return;
-    }
-
-    const tab = eligible[0];
-
-    chrome.tabs.update(tab.id, { active: true }, () => {
-      if (tab.windowId) chrome.windows.update(tab.windowId, { focused: true }, () => {});
-
-      send("START_RECORDING", { excludedDomains, tabId: tab.id }, (result) => {
-        if (chrome.runtime.lastError) return alert(chrome.runtime.lastError.message || "The recorder service is unavailable.");
-        if (!result?.ok) return alert(result?.error || "Recording could not start.");
-      });
-    });
-  });
-  });
-  });
-}
-
-function load() {
-
-  send("GET_TUTORIALS_SUMMARY", {}, (result) => {
-
-    if (chrome.runtime.lastError) {
-      $("grid").innerHTML = "";
-      $("empty").classList.add("hidden");
-      $("noResults").classList.remove("hidden");
-      $("noResults").querySelector("strong").textContent = "Could not connect to the recorder";
-      $("noResults").querySelector("p").textContent = chrome.runtime.lastError.message || "Please reload the page.";
-      return;
-    }
-
-    if (!result) {
-      $("grid").innerHTML = "";
-      $("empty").classList.add("hidden");
-      $("noResults").classList.remove("hidden");
-      $("noResults").querySelector("strong").textContent = "Could not load tutorials";
-      $("noResults").querySelector("p").textContent = "The recorder service returned no data. Please reload the page.";
-      return;
-    }
-    tutorials = result?.tutorials || [];
-
-    const validIds = new Set(tutorials.map((t) => t.id));
-    for (const id of [...selected]) {
-      if (!validIds.has(id)) selected.delete(id);
-    }
-    renderStats();
-    renderGrid();
-  });
-}
-
-let searchTimer;
-searchInput.addEventListener("input", () => {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(renderGrid, 180);
-});
-
-$("newRecording").addEventListener("click", startNewRecording);
-$("importBtn").addEventListener("click", importTutorial);
-$("emptyStart").addEventListener("click", startNewRecording);
-
-statusFilter.addEventListener("change", renderGrid);
-sortBy.addEventListener("change", renderGrid);
-
-$("gridView").addEventListener("click", () => {
-  viewMode = "grid";
-  $("gridView").classList.add("active");
-  $("listView").classList.remove("active");
-  renderGrid();
-});
-$("listView").addEventListener("click", () => {
-  viewMode = "list";
-  $("listView").classList.add("active");
-  $("gridView").classList.remove("active");
-  renderGrid();
-});
-
-$("bulkDelete").addEventListener("click", bulkDelete);
-$("bulkExport").addEventListener("click", openBulkExportDialog);
-$("bulkClear").addEventListener("click", clearSelection);
-
-$("exportMenu").querySelectorAll("[data-export]").forEach((button) => {
-  button.addEventListener("click", () => exportSingle(button.dataset.export));
-});
-
-document.querySelector("#bulkExportDialog .dialog-close").addEventListener("click", () => $("bulkExportDialog").close());
-document.querySelectorAll("[data-bulk-export]").forEach((button) => {
-  button.addEventListener("click", () => bulkExport(button.dataset.bulkExport));
-});
-
-$("clearFilters").addEventListener("click", () => {
-  searchInput.value = "";
-  statusFilter.value = "";
-
-  sortBy.value = "updated";
-  renderGrid();
-});
-
-document.addEventListener("click", (event) => {
-  if (!activeExportId) return;
-  const menu = $("exportMenu");
-  if (!menu.contains(event.target) && !event.target.closest?.("[data-action]")) closeExportMenu();
-});
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") {
-    closeExportMenu();
-    $("bulkExportDialog").close();
-  }
-
-  const tag = document.activeElement?.tagName;
-  if ((event.metaKey || event.ctrlKey) && event.key === "a" && !["INPUT", "TEXTAREA", "SELECT"].includes(tag) && !document.querySelector("dialog[open]")) {
-    event.preventDefault();
-
-    selected.clear();
-    tutorials.forEach((t) => selected.add(t.id));
-    renderGrid();
+els.bulkExport.addEventListener("click", async () => {
+  for (const id of selected) {
+    const res = await bgCall({ type: "GET_TUTORIAL", id });
+    const name = (res.tutorial.title || "tutorial").replace(/[^\w\u0080-\uffff -]/g, "").trim() || "tutorial";
+    download(`${name}.json`, new Blob([JSON.stringify(res.tutorial, null, 2)], { type: "application/json" }));
   }
 });
 
-window.addEventListener("scroll", closeExportMenu, true);
-window.addEventListener("resize", closeExportMenu);
-
-chrome.runtime.onMessage?.addListener((message) => {
-  if (message?.type === "TUTORIALS_CHANGED") {
-
-    clearTimeout(load._debounceTimer);
-    load._debounceTimer = setTimeout(() => load(), 300);
-  }
-});
-
-initTheme().then(() => load());
+load().catch((e) => console.error("[BTR] dashboard load failed:", e));
