@@ -3,6 +3,7 @@ import {
   normalizeTutorial, toSummary
 } from "./shared.js";
 import { getSettings, saveSettings } from "./settings-store.js";
+import { drawCursorMarker } from "./cursor-marker.js";
 import { createRecorder, isInternalUrl, nextScrollY, planCrop } from "./recorder-core.js";
 
 const DRAFT_ID = "draft-current";
@@ -195,6 +196,7 @@ async function attachToTab(tabId, frameId = null) {
     sensitivePatterns: settings.sensitivePatterns,
     autoPauseIdleSec: settings.autoPauseIdleSec,
     showCursor: settings.showCursor !== false,
+    cursorMarker: settings.cursorMarker,
     stepCount: session ? session.stepCount : 0
   }, options);
   attachedTabIds.add(tabId);
@@ -299,40 +301,9 @@ function enqueueEvent(evt, senderInfo) {
   }).catch(() => {});
 }
 
-function drawCursorArtifact(ctx, point, scale) {
-  const px = point.x * scale;
-  const py = point.y * scale;
-  ctx.save();
-  ctx.lineJoin = "round";
-  ctx.beginPath();
-  ctx.arc(px, py, 11 * scale, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(255,115,82,0.15)";
-  ctx.fill();
-  ctx.lineWidth = 3 * scale;
-  ctx.strokeStyle = "rgba(255,115,82,0.95)";
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(px, py, 16 * scale, 0, Math.PI * 2);
-  ctx.lineWidth = 5 * scale;
-  ctx.strokeStyle = "rgba(255,115,82,0.2)";
-  ctx.stroke();
-  ctx.translate((point.x - 2) * scale, (point.y - 2) * scale);
-  ctx.scale(scale, scale);
-  ctx.beginPath();
-  ctx.moveTo(2, 2);
-  ctx.lineTo(2, 34);
-  ctx.lineTo(10, 26);
-  ctx.lineTo(17, 37);
-  ctx.lineTo(23, 33);
-  ctx.lineTo(16, 22);
-  ctx.lineTo(28, 22);
-  ctx.closePath();
-  ctx.fillStyle = "#ffffff";
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = "#172238";
-  ctx.stroke();
-  ctx.restore();
+function drawCursorArtifact(ctx, point, scale, marker) {
+  // One source of truth with the settings-page preview: cursor-marker.js.
+  drawCursorMarker(ctx, point, scale, marker);
 }
 
 // Live progress for full-page captures — GoFullPage-style "Capturing 3/8"
@@ -383,7 +354,7 @@ async function finishScreenshot(dataUrl, evt, verdict, settings) {
       drawCursorArtifact(ctx, {
         x: evt.target.point.x - (crop ? crop.x : 0),
         y: evt.target.point.y - (crop ? crop.y : 0)
-      }, scale);
+      }, scale, settings.cursorMarker);
     }
     const blob = await canvas.convertToBlob({ type: "image/png" });
     const out = { image: await blobToDataUrl(blob), width: Math.round(cw), height: Math.round(ch), dpr: scale };

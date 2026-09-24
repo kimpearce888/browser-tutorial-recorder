@@ -3,7 +3,10 @@ import { makeId, formatDuration } from "./shared.js";
 import { exportTutorial, drawAnnotations } from "./exporter.js";
 import { getSettings, normalizeCombo, onSettingsChanged } from "./settings-store.js";
 import {
-  RECT_TYPES, syncGeom, annotationHit, handlesAt, rotateHandlePos, rotateAround, cropRemap
+  RECT_TYPES, syncGeom, annotationHit, handlesAt, rotateHandlePos, rotateAround, cropRemap,
+  viewerScale, VIEWER_MAX_ZOOM, VIEWER_MIN_ZOOM,
+  cropRect, cropHandlePositions, cropHitTest, applyCropDrag, CROP_HANDLES,
+  nextMarkerNumber
 } from "./annotation-geom.js";
 
 const els = {
@@ -23,7 +26,15 @@ const els = {
   presets: document.getElementById("preset-chips"),
   cropBar: document.getElementById("crop-bar"),
   cropApply: document.getElementById("btn-crop-apply"),
-  cropCancel: document.getElementById("btn-crop-cancel")
+  cropCancel: document.getElementById("btn-crop-cancel"),
+  cropDims: document.getElementById("crop-dims"),
+  markerNum: document.getElementById("style-marker-num"),
+  zoomBar: document.getElementById("zoom-bar"),
+  zoomOut: document.getElementById("btn-zoom-out"),
+  zoomIn: document.getElementById("btn-zoom-in"),
+  zoomLabel: document.getElementById("btn-zoom-label"),
+  zoomFitWidth: document.getElementById("btn-zoom-fit-width"),
+  zoomFitPage: document.getElementById("btn-zoom-fit-page")
 };
 
 const COLORS = ["#ff5b45", "#1a73e8", "#1a7f4b", "#f9ab00", "#15161a"];
@@ -41,12 +52,21 @@ let saveTimer = null;
 let dirty = false;
 
 let display = { image: null, scale: 1, imgScale: 1 };
+// Viewer zoom state. "fit" = fit width (the professional default: a long
+// full-page capture fills the pane's width and scrolls vertically instead
+// of shrinking into an unrecognizable strip), "page" = whole page in the
+// pane, "custom" = explicit zoom factor around natural size.
+let zoom = { mode: "fit", factor: 1 };
 let drag = null;
 let cropMode = false;
 let crop = null;
 let clipboardAnnotation = null;
 let imgCache = { key: "", image: null };
 let lastNudgeAt = 0;
+// Numbered markers run sequentially across the WHOLE tutorial (never
+// restarting at 1 in every step). null = auto (highest existing + 1);
+// a number here is the user's explicit "next #" choice.
+let markerNext = null;
 
 const params = new URLSearchParams(location.search);
 const tutorialId = params.get("id");
@@ -145,24 +165,74 @@ async function renderCanvas() {
     });
     imgCache = { key, image };
   }
-  const wrapW = els.canvasWrap.clientWidth - 32;
-  const wrapH = els.canvasWrap.clientHeight - 32;
-  const fit = Math.min(wrapW / image.naturalWidth, wrapH / image.naturalHeight, 1);
+  const wrapW = Math.max(1, els.canvasWrap.clientWidth - 32);
+  const wrapH = Math.max(1, els.canvasWrap.clientHeight - 32);
+  const scale = viewerScale({
+    mode: zoom.mode, factor: zoom.factor,
+    natW: image.naturalWidth, natH: image.naturalHeight,
+    wrapW, wrapH
+  });
   display.image = image;
-  display.scale = fit;
+  display.scale = scale;
   display.imgScale = step.screenshot.width > 0 ? image.naturalWidth / step.screenshot.width : 1;
-  els.canvas.width = Math.round(image.naturalWidth * fit);
-  els.canvas.height = Math.round(image.naturalHeight * fit);
+  els.canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  els.canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
   ctx.clearRect(0, 0, els.canvas.width, els.canvas.height);
   ctx.drawImage(image, 0, 0, els.canvas.width, els.canvas.height);
   ctx.canvas.__btrImage = image;
-  drawAnnotations(ctx, step.annotations, fit);
+  drawAnnotations(ctx, step.annotations, scale);
   if (selectedAnnotationId && !cropMode) {
     const a = step.annotations.find((x) => x.id === selectedAnnotationId);
-    if (a) drawSelectionUI(ctx, a, fit);
+    if (a) drawSelectionUI(ctx, a, scale);
   }
-  if (cropMode && crop) drawCropOverlay(ctx, fit);
+  if (cropMode && crop) drawCropOverlay(ctx, scale);
+  syncZoomBar();
 }
+
+// ----------------------------------------------------------------
+// Viewer zoom — fit width (default) / fit page / explicit zoom with
+// buttons, Ctrl+wheel and Ctrl+= / Ctrl+- / Ctrl+0.
+// ----------------------------------------------------------------
+function syncZoomBar() {
+  if (!els.zoomLabel) return;
+  els.zoomLabel.textContent = `${Math.round(display.scale * 100)}%`;
+  els.zoomFitWidth.classList.toggle("active", zoom.mode === "fit");
+  els.zoomFitPage.classList.toggle("active", zoom.mode === "page");
+}
+
+function zoomTo(mode, factor = 1) {
+  zoom = { mode, factor };
+  renderCanvas().catch(() => {});
+}
+
+function zoomBy(ratio, anchor) {
+  const next = Math.min(VIEWER_MAX_ZOOM, Math.max(VIEWER_MIN_ZOOM, display.scale * ratio));
+  if (Math.abs(next - display.scale) < 0.001) return;
+  const wrap = els.canvasWrap;
+  const canvas = els.canvas;
+  // Keep the point under the cursor anchored while zooming (margin-auto
+  // centering included via offsetLeft/Top).
+  const imgX = anchor ? (wrap.scrollLeft + anchor.x - canvas.offsetLeft) / Math.max(1e-6, display.scale) : null;
+  const imgY = anchor ? (wrap.scrollTop + anchor.y - canvas.offsetTop) / Math.max(1e-6, display.scale) : null;
+  zoom = { mode: "custom", factor: next };
+  renderCanvas().then(() => {
+    if (imgX == null) return;
+    wrap.scrollLeft = Math.max(0, imgX * next + canvas.offsetLeft - anchor.x);
+    wrap.scrollTop = Math.max(0, imgY * next + canvas.offsetTop - anchor.y);
+  }).catch(() => {});
+}
+
+els.zoomOut.addEventListener("click", () => zoomBy(1 / 1.25));
+els.zoomIn.addEventListener("click", () => zoomBy(1.25));
+els.zoomLabel.addEventListener("click", () => zoomTo("custom", 1));
+els.zoomFitWidth.addEventListener("click", () => zoomTo("fit"));
+els.zoomFitPage.addEventListener("click", () => zoomTo("page"));
+els.canvasWrap.addEventListener("wheel", (e) => {
+  if (!e.ctrlKey && !e.metaKey) return;
+  e.preventDefault();
+  const rect = els.canvasWrap.getBoundingClientRect();
+  zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12, { x: e.clientX - rect.left, y: e.clientY - rect.top });
+}, { passive: false });
 
 function drawSelectionUI(ctx, a, fit) {
   ctx.save();
@@ -218,10 +288,8 @@ function drawSelectionUI(ctx, a, fit) {
 }
 
 function drawCropOverlay(ctx, fit) {
-  const x1 = Math.min(crop.x1, crop.x2) * fit;
-  const y1 = Math.min(crop.y1, crop.y2) * fit;
-  const w = Math.abs(crop.x2 - crop.x1) * fit;
-  const h = Math.abs(crop.y2 - crop.y1) * fit;
+  const r = cropRect(crop);
+  const x1 = r.x * fit, y1 = r.y * fit, w = r.w * fit, h = r.h * fit;
   const W = ctx.canvas.width, H = ctx.canvas.height;
   ctx.save();
   ctx.fillStyle = "rgba(9,10,14,0.55)";
@@ -247,6 +315,34 @@ function drawCropOverlay(ctx, fit) {
     ctx.lineTo(x1 + w, y1 + (h * i) / 3);
     ctx.stroke();
   }
+  // 8 resize handles (corners + edges) — screen-constant size.
+  const handles = cropHandlePositions(crop);
+  const hs = Math.max(3.5, Math.min(6, 5 / (fit || 1)));
+  ctx.fillStyle = "#ffffff";
+  ctx.strokeStyle = "#1a73e8";
+  ctx.lineWidth = 1.5;
+  for (const key of CROP_HANDLES) {
+    const [hx, hy] = handles[key];
+    ctx.beginPath();
+    ctx.rect(hx * fit - hs, hy * fit - hs, hs * 2, hs * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  // Dimension readout on a pill above the marquee (inside when clipped).
+  const label = `${Math.round(r.w)} × ${Math.round(r.h)}`;
+  ctx.font = "600 11px system-ui, sans-serif";
+  const tw = ctx.measureText(label).width;
+  const padX = 7, padY = 5, pillW = tw + padX * 2, pillH = 11 + padY * 2;
+  let lx = x1, ly = y1 - pillH - 6;
+  if (ly < 2) ly = y1 + 6;
+  if (lx + pillW > W - 2) lx = Math.max(2, W - 2 - pillW);
+  ctx.fillStyle = "rgba(21,22,26,0.92)";
+  ctx.beginPath();
+  ctx.roundRect(lx, ly, pillW, pillH, 6);
+  ctx.fill();
+  ctx.fillStyle = "#ffd23f";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, lx + padX, ly + pillH / 2 + 0.5);
   ctx.restore();
 }
 
@@ -277,8 +373,18 @@ els.canvas.addEventListener("pointerdown", (e) => {
   const pt = canvasPoint(e);
 
   if (cropMode) {
-    crop = { x1: pt.x, y1: pt.y, x2: pt.x, y2: pt.y };
-    drag = { kind: "crop", startX: pt.x, startY: pt.y };
+    // Standard crop-tool priority: grab a handle to resize, drag inside the
+    // box to move it, drag outside to draw a fresh marquee.
+    const tol = 1 / (display.scale || 1);
+    const hit = crop ? cropHitTest(crop, pt, tol) : null;
+    if (hit && hit !== "move") {
+      drag = { kind: "crop-resize", handle: hit, orig: { ...crop } };
+    } else if (hit === "move") {
+      drag = { kind: "crop-move", anchor: pt, orig: { ...crop } };
+    } else {
+      crop = { x1: pt.x, y1: pt.y, x2: pt.x, y2: pt.y };
+      drag = { kind: "crop-new", anchor: pt };
+    }
     renderCanvas();
     return;
   }
@@ -329,7 +435,7 @@ els.canvas.addEventListener("pointerdown", (e) => {
     opacity: style.opacity,
     blur: style.blur,
     fontSize: style.fontSize,
-    number: step.annotations.filter((x) => x.type === "marker").length + 1,
+    number: 0, // resolved below for markers (tutorial-wide sequence)
     text: ""
   };
   if (tool === "text") {
@@ -343,6 +449,7 @@ els.canvas.addEventListener("pointerdown", (e) => {
     return;
   }
   if (tool === "marker") {
+    base.number = takeMarkerNumber();
     snapshot();
     step.annotations.push(base);
     markDirty();
@@ -421,9 +528,18 @@ els.canvas.addEventListener("pointermove", (e) => {
     );
     a.x = next.x; a.y = next.y; a.x2 = next.x2; a.y2 = next.y2;
     syncGeom(a);
-  } else if (drag.kind === "crop") {
-    crop.x2 = pt.x;
-    crop.y2 = pt.y;
+  } else if (drag.kind === "crop-new") {
+    crop = applyCropDrag(crop, "new", null, drag.anchor, pt, {
+      w: display.image.naturalWidth, h: display.image.naturalHeight
+    });
+  } else if (drag.kind === "crop-move") {
+    crop = applyCropDrag(drag.orig, "move", null, drag.anchor, pt, {
+      w: display.image.naturalWidth, h: display.image.naturalHeight
+    });
+  } else if (drag.kind === "crop-resize") {
+    crop = applyCropDrag(drag.orig, "resize", drag.handle, null, pt, {
+      w: display.image.naturalWidth, h: display.image.naturalHeight
+    });
   }
   renderCanvas();
 });
@@ -453,17 +569,39 @@ els.canvas.addEventListener("pointerup", (e) => {
     markDirty();
   } else if (kind === "move" || kind === "resize" || kind === "rotate") {
     markDirty();
-  } else if (kind === "crop") {
-    crop.x2 = pt.x;
-    crop.y2 = pt.y;
+  } else if (kind === "crop-new") {
+    crop = applyCropDrag(crop, "new", null, drag.anchor, pt, {
+      w: display.image.naturalWidth, h: display.image.naturalHeight
+    });
     // An accidental click without a real drag clears the marquee instead of
     // committing a degenerate crop region.
     const minPx = 8 / (display.scale || 1);
     if (Math.abs(crop.x2 - crop.x1) < minPx || Math.abs(crop.y2 - crop.y1) < minPx) crop = null;
     syncCropBar();
+  } else if (kind === "crop-move" || kind === "crop-resize") {
+    syncCropBar();
   }
   drag = null;
   renderCanvas();
+});
+
+// Hover feedback for the crop tool: the cursor tells you what a press will
+// do (resize by direction, move inside the box, draw a fresh one outside).
+const CROP_CURSORS = {
+  nw: "nwse-resize", se: "nwse-resize",
+  ne: "nesw-resize", sw: "nesw-resize",
+  n: "ns-resize", s: "ns-resize",
+  e: "ew-resize", w: "ew-resize"
+};
+els.canvas.addEventListener("pointermove", (e) => {
+  if (drag || !cropMode) return;
+  const step = currentStep();
+  if (!step || !display.image) return;
+  const hit = crop ? cropHitTest(crop, canvasPoint(e), 1 / (display.scale || 1)) : null;
+  els.canvas.style.cursor = hit === "move" ? "move" : (hit && CROP_CURSORS[hit]) || "crosshair";
+});
+els.canvas.addEventListener("pointerleave", () => {
+  if (cropMode && !drag) els.canvas.style.cursor = "crosshair";
 });
 
 // Only one text box may exist at a time; its finisher is stored here so a
@@ -529,6 +667,14 @@ function syncCropBar() {
   if (!els.cropBar) return;
   els.cropBar.classList.toggle("hidden", !cropMode);
   els.cropApply.disabled = !crop;
+  if (els.cropDims) {
+    if (crop) {
+      const r = cropRect(crop);
+      els.cropDims.textContent = `${Math.round(r.w)} × ${Math.round(r.h)} px`;
+    } else {
+      els.cropDims.textContent = "";
+    }
+  }
 }
 
 function exitCropMode() {
@@ -713,6 +859,7 @@ function renderAll() {
   renderStepList();
   renderCanvas().catch((e) => console.error(e));
   renderProps();
+  syncMarkerNumInput();
 }
 
 els.propDescription.addEventListener("input", () => {
@@ -741,6 +888,18 @@ document.getElementById("style-stroke").addEventListener("input", (e) => { style
 document.getElementById("style-opacity").addEventListener("input", (e) => { style.opacity = Number(e.target.value) / 100; });
 document.getElementById("style-blur").addEventListener("input", (e) => { style.blur = Number(e.target.value); });
 document.getElementById("style-font").addEventListener("input", (e) => { style.fontSize = Number(e.target.value); });
+
+// "Next #" control for numbered markers: typing a number pins the next
+// marker number; clearing the field returns to auto (highest existing + 1).
+els.markerNum.addEventListener("input", (e) => {
+  const v = parseInt(e.target.value, 10);
+  markerNext = Number.isFinite(v) && v >= 1 ? v : null;
+});
+els.markerNum.addEventListener("keydown", (e) => {
+  // Enter commits and blurs; do not let the global shortcut loop eat it.
+  if (e.key === "Enter") e.target.blur();
+  e.stopPropagation();
+});
 
 document.getElementById("btn-save-preset").addEventListener("click", async () => {
   const name = prompt("Preset name:", "My style");
@@ -785,11 +944,28 @@ function pasteAnnotation() {
   copy.id = makeId("ann");
   copy.x += 14; copy.y += 14;
   if (copy.x2 != null) { copy.x2 += 14; copy.y2 += 14; }
-  if (copy.type === "marker") copy.number = step.annotations.filter((x) => x.type === "marker").length + 1;
+  if (copy.type === "marker") copy.number = takeMarkerNumber();
   step.annotations.push(copy);
   selectedAnnotationId = copy.id;
   markDirty();
   renderCanvas();
+}
+
+// ----------------------------------------------------------------
+// Numbered markers: the sequence runs across the WHOLE tutorial
+// (Scribe-style), and the "Next #" field gives explicit control —
+// type a number to restart the series from there; empty = auto.
+// ----------------------------------------------------------------
+function takeMarkerNumber() {
+  const n = markerNext != null ? markerNext : nextMarkerNumber(tutorial.steps);
+  markerNext = n + 1;
+  syncMarkerNumInput();
+  return n;
+}
+
+function syncMarkerNumInput() {
+  if (!els.markerNum || !tutorial) return;
+  els.markerNum.value = String(markerNext != null ? markerNext : nextMarkerNumber(tutorial.steps));
 }
 
 function shortcutsHelpText() {
@@ -960,6 +1136,14 @@ window.addEventListener("keydown", (e) => {
   if (!typing && cropMode) {
     if (e.key === "Enter") { e.preventDefault(); applyCrop(); return; }
     if (e.key === "Escape") { e.preventDefault(); cancelCrop(); return; }
+  }
+  // Zoom keys (Ctrl/⌘ = / - / 0), mirroring the zoom bar. "0" returns to
+  // fit width — the standard "actual/fit" convention for image viewers.
+  if (!typing && (e.ctrlKey || e.metaKey) && !e.altKey && ["=", "+", "-", "0"].includes(e.key)) {
+    e.preventDefault();
+    if (e.key === "0") zoomTo("fit");
+    else zoomBy(e.key === "-" ? 1 / 1.25 : 1.25);
+    return;
   }
   // Arrow keys nudge the selected annotation — table stakes for annotation
   // editors. One undo entry per burst, not per keypress.

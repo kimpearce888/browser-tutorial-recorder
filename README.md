@@ -9,11 +9,11 @@ Everything stays on your device. No accounts, no cloud uploads, no telemetry.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-34A853)](https://developer.chrome.com/docs/extensions/mv3/)
-[![Tests: 367](https://img.shields.io/badge/Tests-367%20passing-success)](./test-suite.mjs)
+[![Tests: 442](https://img.shields.io/badge/Tests-442%20passing-success)](./test-suite.mjs)
 [![CI](https://github.com/kimpearce888/browser-tutorial-recorder/actions/workflows/ci.yml/badge.svg)](https://github.com/kimpearce888/browser-tutorial-recorder/actions/workflows/ci.yml)
-[![Version: 2.1.2](https://img.shields.io/badge/Version-2.1.2-ff7352)](./manifest.json)
+[![Version: 2.2.0](https://img.shields.io/badge/Version-2.2.0-ff7352)](./manifest.json)
 
-**Version: v2.1.0** — a complete, from-scratch rewrite of the recording engine built for reliability.
+**Version: v2.2.0** — a complete, from-scratch rewrite of the recording engine built for reliability.
 
 ---
 
@@ -37,6 +37,7 @@ Everything stays on your device. No accounts, no cloud uploads, no telemetry.
 - **Action-focused event capture**: CLICK, DOUBLE_CLICK, RIGHT_CLICK, MIDDLE_CLICK, TYPE (with the typed text), SELECT, CHECKBOX, RADIO, SUBMIT, KEYBOARD, DROP, NAVIGATION, NEW_TAB — scrolling is positioning, not a step; a "Navigate to …" opener step starts every tutorial
 - **Fire-and-forget event pipeline** — user actions are never dropped waiting on a screenshot
 - **Clean, professional screenshots** — recorder UI is hidden during capture, steps keep the full current view by default (Scribe-style element close-ups are an opt-in in Settings), and the click marker is stamped onto the image by the service worker for a consistent look
+- **Customizable cursor highlight** — pick a preset (classic ring, small yellow filled circle with blur, high-visibility, …) or fine-tune color, size, fill strength and glow in Settings, with a live preview; the live recording ring and the stamped marker always match
 - **Multi-tab support** — follows your workflow across tabs and new windows automatically
 - **SPA navigation capture** — records `history.pushState` / `hashchange` (React, Vue, Angular)
 - **Smart double-click detection** via `event.detail` (browser-authoritative)
@@ -49,8 +50,9 @@ Everything stays on your device. No accounts, no cloud uploads, no telemetry.
 
 ### Editor
 
-- **9 annotation tools**: highlight, rectangle, circle, arrow, text, blur, redaction, spotlight, numbered markers
-- **Step management**: crop (annotations re-anchored), merge with next, split, duplicate, pointer-based drag-to-reorder
+- **9 annotation tools**: highlight, rectangle, circle, arrow, text, blur, redaction, spotlight, numbered markers (sequential across the whole tutorial, with a "Next #" control to restart the series anywhere)
+- **Step management**: crop (8-handle marquee: drag inside to move, outside to redraw, live W×H readout; annotations re-anchored), merge with next, split, duplicate, pointer-based drag-to-reorder
+- **Readable full-page captures** — the editor opens screenshots fit-width by default (a 12,000 px tall page fills the pane and scrolls instead of shrinking into an unrecognizable strip), with zoom in/out buttons, Ctrl+wheel, fit-page mode and keyboard shortcuts
 - **Annotation presets** — save and reuse your favorite styles
 - **Undo / redo** with 60-step history (screenshots stored by reference — no memory bloat)
 - **Recapture** — re-take a step's screenshot (viewport or scroll-stitched full page)
@@ -184,7 +186,7 @@ The v2.0.0 recording engine was rebuilt from scratch around four reliability pri
 
 ## Quality assurance
 
-- **260 automated tests** covering `recorder-core.js`, `shared.js`, `settings-store.js`, `gif-encoder.js`, `exporter.js`, and the real `content.js` (evaluated in jsdom)
+- **442 automated tests** covering `recorder-core.js`, `shared.js`, `settings-store.js`, `gif-encoder.js`, `exporter.js`, `cursor-marker.js`, `annotation-geom.js`, the real `content.js` (evaluated in jsdom), the full background ⇄ content message bus, and a static import/export cross-check of every module
 - **Static analysis** — all JS files pass `node --check` syntax validation
 - **CI workflow** — tests auto-run on every push and pull request via GitHub Actions
 

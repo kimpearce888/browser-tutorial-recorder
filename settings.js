@@ -2,6 +2,7 @@ import { bgCall } from "./common-ui.js";
 import { formatBytes } from "./shared.js";
 import { downloadBlob } from "./exporter.js";
 import { EDITOR_ACTIONS, normalizeCombo, findShortcutConflicts } from "./settings-store.js";
+import { CURSOR_PRESETS, drawCursorMarker } from "./cursor-marker.js";
 
 const $ = (id) => document.getElementById(id);
 let settings = null;
@@ -22,6 +23,7 @@ function fill() {
   $("quality-field").style.display = settings.screenshotFormat === "jpeg" ? "" : "none";
   $("show-cursor").checked = settings.showCursor !== false;
   $("auto-element-crop").checked = settings.autoElementCrop === true;
+  fillCursorMarker();
   $("idle-timeout").value = String(settings.autoPauseIdleSec);
   $("excluded").value = settings.excludedDomains.join("\n");
   $("sensitive").value = settings.sensitivePatterns.join("\n");
@@ -37,6 +39,100 @@ function fill() {
 async function patch(update) {
   settings = (await bgCall({ type: "SAVE_SETTINGS", patch: update })).settings;
   fill();
+}
+
+// ----------------------------------------------------------------
+// Cursor highlight options — presets, color, size, fill, glow and a
+// live preview that draws the marker exactly like the service worker
+// stamps it into screenshots (same drawCursorMarker).
+// ----------------------------------------------------------------
+const CURSOR_SWATCH_COLORS = [
+  "#ff7352", "#ffd23f", "#1a73e8", "#1a7f4b",
+  "#d64cf0", "#e8453c", "#ffffff", "#15161a"
+];
+let cursorPresetEls = null;
+
+function fillCursorMarker() {
+  if (!cursorPresetEls) buildCursorControls();
+  const m = settings.cursorMarker || {};
+  $("cursor-size").value = String(Math.round((m.size || 1) * 100));
+  $("cursor-size-val").textContent = `${Math.round((m.size || 1) * 100)}%`;
+  $("cursor-fill").value = String(Math.round((m.fillOpacity == null ? 0.15 : m.fillOpacity) * 100));
+  $("cursor-fill-val").textContent = `${Math.round((m.fillOpacity == null ? 0.15 : m.fillOpacity) * 100)}%`;
+  $("cursor-glow").value = String(m.glow == null ? 0 : m.glow);
+  $("cursor-glow-val").textContent = m.glow > 0 ? `${m.glow} px` : "off";
+  for (const btn of $("cursor-colors").children) {
+    btn.classList.toggle("active", btn.dataset.color === m.color);
+  }
+  $("cursor-color-custom").value = /^#[0-9a-f]{6}$/i.test(m.color || "") ? m.color : "#ff7352";
+  drawCursorPreview();
+}
+
+function buildCursorControls() {
+  cursorPresetEls = true;
+  const presets = $("cursor-presets");
+  for (const preset of CURSOR_PRESETS) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip";
+    chip.textContent = preset.name;
+    chip.addEventListener("click", () => patch({ cursorMarker: {
+      color: preset.color, size: preset.size, fillOpacity: preset.fillOpacity, glow: preset.glow
+    } }));
+    presets.appendChild(chip);
+  }
+  const colors = $("cursor-colors");
+  for (const color of CURSOR_SWATCH_COLORS) {
+    const sw = document.createElement("button");
+    sw.type = "button";
+    sw.className = "swatch";
+    sw.dataset.color = color;
+    sw.style.background = color;
+    sw.title = color;
+    sw.addEventListener("click", () => patchMarker({ color }));
+    colors.appendChild(sw);
+  }
+  $("cursor-color-custom").addEventListener("change", (e) => patchMarker({ color: e.target.value }));
+  $("cursor-size").addEventListener("input", (e) => {
+    $("cursor-size-val").textContent = `${e.target.value}%`;
+    patchMarker({ size: Number(e.target.value) / 100 });
+  });
+  $("cursor-fill").addEventListener("input", (e) => {
+    $("cursor-fill-val").textContent = `${e.target.value}%`;
+    patchMarker({ fillOpacity: Number(e.target.value) / 100 });
+  });
+  $("cursor-glow").addEventListener("input", (e) => {
+    $("cursor-glow-val").textContent = Number(e.target.value) > 0 ? `${e.target.value} px` : "off";
+    patchMarker({ glow: Number(e.target.value) });
+  });
+}
+
+function patchMarker(partial) {
+  return patch({ cursorMarker: { ...(settings.cursorMarker || {}), ...partial } });
+}
+
+function drawCursorPreview() {
+  const canvas = $("cursor-preview");
+  if (!canvas || !canvas.getContext) return;
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  // A believable page snippet: header bar, text lines and the button that
+  // was "clicked" — so the marker can be judged the way it will read.
+  ctx.clearRect(0, 0, W, H);
+  const dark = document.documentElement.getAttribute("data-theme") === "dark";
+  ctx.fillStyle = dark ? "#1e2026" : "#f4f5f7";
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = dark ? "#2a2d35" : "#ffffff";
+  ctx.fillRect(14, 14, W - 28, H - 28);
+  ctx.fillStyle = dark ? "#4a4e59" : "#d7dbe2";
+  ctx.fillRect(30, 34, 180, 9);
+  ctx.fillRect(30, 54, 240, 9);
+  ctx.fillStyle = "#1a73e8";
+  ctx.fillRect(284, 76, 108, 30);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "600 12px system-ui, sans-serif";
+  ctx.fillText("Buy now", 312, 95);
+  drawCursorMarker(ctx, { x: 338, y: 90 }, 1, settings.cursorMarker);
 }
 
 function renderShortcuts() {

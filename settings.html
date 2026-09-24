@@ -44,6 +44,35 @@
     </section>
 
     <section class="card">
+      <h2>Cursor highlight</h2>
+      <p class="muted small">The click marker shown on every screenshot — and the live ring while recording. Pick a preset or fine-tune it: some pages read better with a small yellow filled circle with blur, others need a bold dark ring.</p>
+      <div class="field">
+        <span class="field-label">Presets</span>
+        <div id="cursor-presets" class="chip-row"></div>
+      </div>
+      <div class="field">
+        <span class="field-label">Color</span>
+        <div class="inline">
+          <div id="cursor-colors" class="chip-row"></div>
+          <input id="cursor-color-custom" type="color" title="Custom color" />
+        </div>
+      </div>
+      <label class="field">Size
+        <div class="inline"><input id="cursor-size" type="range" min="50" max="200" step="5" /><span id="cursor-size-val"></span></div>
+      </label>
+      <label class="field">Fill opacity
+        <div class="inline"><input id="cursor-fill" type="range" min="0" max="85" step="5" /><span id="cursor-fill-val"></span></div>
+      </label>
+      <label class="field">Glow / blur
+        <div class="inline"><input id="cursor-glow" type="range" min="0" max="24" step="1" /><span id="cursor-glow-val"></span></div>
+      </label>
+      <div class="field">
+        <span class="field-label">Preview — exactly what a captured step will show</span>
+        <canvas id="cursor-preview" width="420" height="120" class="cursor-preview"></canvas>
+      </div>
+    </section>
+
+    <section class="card">
       <h2>Appearance</h2>
       <label class="field">Theme
         <select id="theme">

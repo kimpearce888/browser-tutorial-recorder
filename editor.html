@@ -52,6 +52,7 @@
         <button class="tool" data-tool="spotlight" title="Spotlight (8)">◍</button>
         <button class="tool" data-tool="marker" title="Numbered marker (9)">➉</button>
         <span class="tool-sep"></span>
+        <label class="style-field marker-num-field" title="Numbered markers count across the whole tutorial; type a number to restart from there">Next # <input id="style-marker-num" type="number" min="1" max="999" class="marker-num" /></label>
         <button id="btn-undo" class="btn small" title="Undo">↶</button>
         <button id="btn-redo" class="btn small" title="Redo">↷</button>
         <button id="btn-copy-annotation" class="btn small" title="Copy selected annotation (Ctrl+C)">⧉</button>
@@ -70,8 +71,17 @@
       </div>
       <div id="canvas-wrap" class="canvas-wrap">
         <canvas id="canvas"></canvas>
+        <div id="zoom-bar" class="zoom-bar" role="group" aria-label="Zoom controls">
+          <button id="btn-zoom-out" class="zb-btn" title="Zoom out (Ctrl+-)">−</button>
+          <button id="btn-zoom-label" class="zb-btn zb-label" title="Back to 100%">100%</button>
+          <button id="btn-zoom-in" class="zb-btn" title="Zoom in (Ctrl+=)">+</button>
+          <span class="zb-sep"></span>
+          <button id="btn-zoom-fit-width" class="zb-btn zb-mode" title="Fit width — the page fills the pane width; scroll vertically (Ctrl+0)">Fit width</button>
+          <button id="btn-zoom-fit-page" class="zb-btn zb-mode" title="Fit the whole page in the pane">Fit page</button>
+        </div>
         <div id="crop-bar" class="crop-bar hidden" role="group" aria-label="Crop actions">
-          <span class="crop-hint">Drag a rectangle, then apply</span>
+          <span class="crop-hint">Drag a rectangle · drag inside to move · handles to resize</span>
+          <span id="crop-dims" class="crop-dims"></span>
           <button id="btn-crop-apply" class="btn small primary" disabled>Apply crop</button>
           <button id="btn-crop-cancel" class="btn small ghost">Cancel</button>
         </div>

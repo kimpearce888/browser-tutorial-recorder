@@ -1828,6 +1828,305 @@ section("v2.1.2 — SUBMIT adopts the replaced CLICK step's screenshot (recorder
 }
 
 /* ------------------------------------------------------------------ */
+section("v2.2.0 — cursor-marker.js: presets, normalization, configured stamp");
+
+import { normalizeCursorMarker, DEFAULT_CURSOR_MARKER, CURSOR_PRESETS, drawCursorMarker, markerRadius } from "./cursor-marker.js";
+
+{
+  // Settings pipeline normalization.
+  const d = normalizeSettings({});
+  assert(d.cursorMarker && d.cursorMarker.color === DEFAULT_CURSOR_MARKER.color
+    && d.cursorMarker.size === 1 && d.cursorMarker.fillOpacity === 0.15 && d.cursorMarker.glow === 0,
+    "cursorMarker defaults to the classic ring");
+  const c = normalizeSettings({ cursorMarker: { color: "nope", size: 9, fillOpacity: 3, glow: 99 } });
+  assert(c.cursorMarker.color === DEFAULT_CURSOR_MARKER.color && c.cursorMarker.size === 2
+    && c.cursorMarker.fillOpacity === 0.85 && c.cursorMarker.glow === 24,
+    "cursorMarker clamps out-of-range values");
+  const y = normalizeSettings({ cursorMarker: { color: "#FFD23F", size: 0.75, fillOpacity: 0.55, glow: 9 } });
+  assert(y.cursorMarker.color === "#ffd23f" && y.cursorMarker.size === 0.75 && y.cursorMarker.glow === 9,
+    "cursorMarker accepts and lowercases valid hex");
+
+  // The user's exact ask must ship as a preset: a small yellow filled circle with blur.
+  const yellow = CURSOR_PRESETS.find((p) => /yellow/i.test(p.name));
+  assert(yellow && yellow.color === "#ffd23f" && yellow.size < 1 && yellow.fillOpacity >= 0.5 && yellow.glow > 0,
+    "presets include a small yellow filled circle with blur");
+  for (const p of CURSOR_PRESETS) {
+    const n = normalizeCursorMarker(p);
+    assert(n.color === p.color, `preset "${p.name}" survives normalization`);
+  }
+
+  // The stamp drawing itself (canvas spy).
+  const log = { arcs: 0, fills: [], shadow: [] };
+  const ctx = {
+    beginPath() {}, moveTo() {}, lineTo() {}, closePath() {},
+    arc() { log.arcs++; }, fill() {}, stroke() {}, save() {}, restore() {},
+    translate() {}, scale() {},
+    set fillStyle(v) { log.fills.push(v); },
+    set strokeStyle(v) {}, set lineWidth(v) {}, set lineJoin(v) {},
+    set shadowBlur(v) { log.shadow.push(v); }, set shadowColor(v) {},
+    set font(v) {}, set textBaseline(v) {}, set textAlign(v) {}
+  };
+  drawCursorMarker(ctx, { x: 20, y: 20 }, 2, { color: "#1a73e8", size: 1.2, fillOpacity: 0.4, glow: 10 });
+  assert(log.arcs === 3, `marker draws disc + ring + halo (got ${log.arcs} arcs)`);
+  assert(log.fills.some((v) => v === "rgba(26,115,232,0.4)"), "fill disc uses the configured color+opacity");
+  assert(log.shadow.includes(20), `glow scales with capture dpr (shadowBlur 10×2, got ${log.shadow.join(",")})`);
+  assert(log.fills.includes("#ffffff"), "the white cursor glyph is still drawn");
+  drawCursorMarker(ctx, { x: 0, y: 0 }, 1, null);
+  assert(log.arcs === 6, "draws safely with a null config (classic fallback)");
+  eq(markerRadius({ size: 2 }), 22, "markerRadius scales with size");
+}
+
+/* ------------------------------------------------------------------ */
+section("v2.2.0 — live ring mirrors the configured cursor marker (content.js in jsdom)");
+
+{
+  const dom = new JSDOM(`<!DOCTYPE html><html><body><button id="b">Go</button></body></html>`,
+    { url: "https://example.com/app", runScripts: "dangerously", pretendToBeVisual: true });
+  const { window } = dom;
+  const listeners = [];
+  window.chrome = {
+    runtime: {
+      sendMessage: () => Promise.resolve({ ok: true }),
+      onMessage: { addListener: (fn) => listeners.push(fn) }
+    }
+  };
+  if (!window.CSS) window.CSS = {};
+  if (!window.CSS.escape) window.CSS.escape = (s) => String(s);
+  const src = readFileSync(new URL("./content.js", import.meta.url), "utf8");
+  const scriptEl = window.document.createElement("script");
+  scriptEl.textContent = src;
+  window.document.body.appendChild(scriptEl);
+  const hooks = window.__btrTest;
+  assert(hooks && typeof hooks.spawnClickRing === "function", "content script exposes ring hooks");
+
+  listeners[0]({ type: "ATTACH_RECORDER", recording: true, paused: false, excludedDomains: [], sensitivePatterns: [], showCursor: true, stepCount: 0 }, {}, () => {});
+  eq(hooks.getState().cursorMarker.color, "#ff7352", "attach without a marker config falls back to classic");
+
+  listeners[0]({ type: "ATTACH_RECORDER", recording: true, paused: false, excludedDomains: [], sensitivePatterns: [], showCursor: true, cursorMarker: { color: "#ffd23f", size: 0.75, fillOpacity: 0.55, glow: 9 }, stepCount: 3 }, {}, () => {});
+  eq(hooks.getState().cursorMarker.color, "#ffd23f", "attach carries the configured marker");
+  hooks.spawnClickRing(50, 60);
+  const ring = hooks.lastRingEl();
+  assert(ring, "click spawns the live ring");
+  const css = ring.getAttribute("style") || "";
+  assert(/rgba\(255,\s*210,\s*63,\s*0\.95\)/.test(css), "ring border uses the configured color");
+  assert(/rgba\(255,\s*210,\s*63,\s*0\.55\)/.test(css), "ring fill uses the configured fill opacity");
+  assert(/margin:\s*-11px/.test(css), `small size shrinks the ring box (got: ${css.slice(0, 120)})`);
+  assert(/14px/.test(css), "glow widens the ring box-shadow");
+  eq(hooks.clickRingCount(), 1, "ring registered");
+  dom.window.close();
+}
+
+/* ------------------------------------------------------------------ */
+section("v2.2.0 — background stamps the CONFIGURED marker onto screenshots");
+
+{
+  const TAB1 = { id: 5, windowId: 5, url: "https://example.com/marker", title: "Marker App", active: true };
+  const tabsMap = new Map([[5, TAB1]]);
+  const store = { local: new Map(), session: new Map() };
+  const mkStorage = (m) => ({
+    get: async (keys) => {
+      const out = {};
+      for (const k of (Array.isArray(keys) ? keys : [keys])) if (m.has(k)) out[k] = m.get(k);
+      return out;
+    },
+    set: async (obj) => { for (const [k, v] of Object.entries(obj)) m.set(k, v); },
+    remove: async (keys) => { for (const k of (Array.isArray(keys) ? keys : [keys])) m.delete(k); }
+  });
+  const bgMessageHandlers = [];
+  const canvasLog = { constructed: [], drawImage: [], arcs: 0, fills: [], shadow: [] };
+  globalThis.OffscreenCanvas = class {
+    constructor(w, h) { this.width = w; this.height = h; canvasLog.constructed.push([w, h]); }
+    getContext() {
+      return {
+        drawImage: (...args) => canvasLog.drawImage.push(args),
+        arc: () => { canvasLog.arcs++; },
+        beginPath() {}, moveTo() {}, lineTo() {}, closePath() {},
+        fill() {}, stroke() {}, save() {}, restore() {},
+        translate() {}, scale() {},
+        set fillStyle(v) { canvasLog.fills.push(v); },
+        set strokeStyle(v) {}, set lineWidth(v) {}, set lineJoin(v) {},
+        set shadowBlur(v) { canvasLog.shadow.push(v); }, set shadowColor(v) {},
+        set font(v) {}, set textBaseline(v) {}, set textAlign(v) {}
+      };
+    }
+    async convertToBlob() { return new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], { type: "image/png" }); }
+  };
+  globalThis.createImageBitmap = async () => ({ width: 1280, height: 720, close() {} });
+  if (typeof globalThis.FileReader === "undefined") {
+    globalThis.FileReader = class {
+      readAsDataURL(blob) {
+        blob.arrayBuffer().then((buf) => {
+          this.result = `data:image/png;base64,${Buffer.from(buf).toString("base64")}`;
+          if (this.onload) this.onload();
+        });
+      }
+    };
+  }
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).startsWith("data:")) {
+      const b64 = String(url).split(",")[1] || "";
+      return { blob: async () => new Blob([Buffer.from(b64, "base64")], { type: "image/png" }) };
+    }
+    return realFetch(url);
+  };
+  globalThis.chrome = {
+    runtime: {
+      id: "btr-test-ext",
+      getURL: (p) => `chrome-extension://btr-test-ext/${p || ""}`,
+      onMessage: { addListener: (fn) => bgMessageHandlers.push(fn) }
+    },
+    storage: {
+      local: mkStorage(store.local),
+      session: mkStorage(store.session),
+      onChanged: { addListener: () => {} }
+    },
+    action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
+    scripting: { executeScript: async () => [{ result: null }] },
+    commands: { onCommand: { addListener: () => {} } },
+    tabs: {
+      query: async (q) => (q && q.active ? [TAB1] : [...tabsMap.values()]),
+      get: async (id) => tabsMap.get(id) || null,
+      create: async (o) => ({ id: 98, ...o }),
+      update: async () => ({}),
+      remove: async () => {},
+      sendMessage: async () => undefined,
+      captureVisibleTab: async () => "data:image/png;base64,MOCKSHOT",
+      onUpdated: { addListener: () => {} },
+      onActivated: { addListener: () => {} },
+      onCreated: { addListener: () => {} },
+      onRemoved: { addListener: () => {} }
+    }
+  };
+
+  await import("./background.js?v220-marker");
+
+  const callBg = (message, sender) => Promise.race([
+    new Promise((resolve) => { bgMessageHandlers[0](message, sender, resolve); }),
+    new Promise((r) => setTimeout(() => r(undefined), 800))
+  ]);
+  const contentSender = { id: "btr-test-ext", tab: { id: 5, windowId: 5 }, frameId: 0, url: "https://example.com/marker" };
+  const pageSender = { id: "btr-test-ext", url: "chrome-extension://btr-test-ext/popup.html" };
+
+  // The user's scenario: a small yellow filled circle with blur.
+  const saved = await callBg({ type: "SAVE_SETTINGS", patch: { captureDelayMs: 0, cursorMarker: { color: "#ffd23f", size: 0.75, fillOpacity: 0.55, glow: 9 } } }, pageSender);
+  assert(saved.settings.cursorMarker.color === "#ffd23f" && saved.settings.cursorMarker.glow === 9,
+    "SAVE_SETTINGS stores the configured marker");
+  await callBg({ type: "START_RECORDING" }, pageSender);
+  for (let i = 0; i < 40; i++) {
+    const ui = await callBg({ type: "GET_UI_STATE" }, pageSender);
+    if (ui && ui.uiState.session && ui.uiState.session.stepCount >= 1) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+
+  canvasLog.constructed.length = 0;
+  canvasLog.drawImage.length = 0;
+  canvasLog.arcs = 0; canvasLog.fills.length = 0; canvasLog.shadow.length = 0;
+
+  bgMessageHandlers[0](
+    { type: "REC_EVENT", event: "CLICK", url: "https://example.com/marker", frameUrl: "https://example.com/marker", isIframe: false, frameNonce: null, overlayActive: true, description: 'Click "Pay"', target: { selector: "#pay", tag: "button", text: "Pay", point: { x: 400, y: 300 }, boundingBox: { x: 360, y: 284, width: 80, height: 32 } }, viewport: { width: 1280, height: 720, devicePixelRatio: 1 } },
+    contentSender,
+    () => {}
+  );
+  for (let i = 0; i < 40; i++) {
+    const ui = await callBg({ type: "GET_UI_STATE" }, pageSender);
+    if (ui && ui.uiState.session && ui.uiState.session.stepCount >= 2) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+
+  assert(canvasLog.arcs === 3, `the stamp uses the marker draw (3 arcs, got ${canvasLog.arcs})`);
+  assert(canvasLog.fills.some((v) => v === "rgba(255,210,63,0.55)"),
+    "the stamped fill disc is the configured yellow at 55%");
+  assert(canvasLog.shadow.includes(9), "the stamped glow uses the configured blur");
+  assert(canvasLog.drawImage.length === 1, "the frame is drawn once (no crop by default)");
+
+  delete globalThis.fetch;
+  delete globalThis.OffscreenCanvas;
+  delete globalThis.createImageBitmap;
+  delete globalThis.FileReader;
+  delete globalThis.chrome;
+}
+
+/* ------------------------------------------------------------------ */
+section("v2.2.0 — viewer zoom: fit-width default, fit page, custom clamp");
+
+import { viewerScale, VIEWER_MIN_ZOOM, VIEWER_MAX_ZOOM, cropRect, cropHandlePositions, cropHitTest, applyCropDrag, CROP_HANDLES, nextMarkerNumber } from "./annotation-geom.js";
+
+{
+  // A long full-page capture: 1280 x 12000 in a 900 x 600 pane.
+  const tall = { natW: 1280, natH: 12000, wrapW: 900, wrapH: 600 };
+  const fitW = viewerScale({ mode: "fit", ...tall });
+  assert(Math.abs(fitW - 900 / 1280) < 1e-9, `fit-width default keeps a long page READABLE (scale ${fitW.toFixed(3)}, fills the pane width)`);
+  const fitP = viewerScale({ mode: "page", ...tall });
+  assert(Math.abs(fitP - 600 / 12000) < 1e-9, `fit page still offered (scale ${fitP.toFixed(3)} — the old unrecognizable strip)`);
+  assert(fitW > fitP * 10, "fit width is dramatically more readable than fit page for tall shots");
+
+  // A normal viewport screenshot: fit width equals the old fit.
+  const normal = { natW: 1280, natH: 720, wrapW: 1000, wrapH: 620 };
+  assert(Math.abs(viewerScale({ mode: "fit", ...normal }) - 1000 / 1280) < 1e-9, "fit width for a normal shot fills the pane width");
+  assert(Math.abs(viewerScale({ mode: "page", ...normal }) - 1000 / 1280) < 1e-9, "fit page equals fit width when the shot already fits");
+
+  // Never upscales in fit mode; custom zoom clamps.
+  const small = { natW: 400, natH: 300, wrapW: 900, wrapH: 600 };
+  eq(viewerScale({ mode: "fit", ...small }), 1, "fit width never upscales past 1:1");
+  eq(viewerScale({ mode: "custom", factor: 2, ...normal }), 2, "custom zoom 200% honored");
+  eq(viewerScale({ mode: "custom", factor: 0.001, ...normal }), VIEWER_MIN_ZOOM, "custom zoom clamps low");
+  eq(viewerScale({ mode: "custom", factor: 99, ...normal }), VIEWER_MAX_ZOOM, "custom zoom clamps high");
+  eq(viewerScale({ mode: "fit", natW: 0, natH: 0, wrapW: 10, wrapH: 10 }), 1, "degenerate sizes fall back to 1");
+}
+
+/* ------------------------------------------------------------------ */
+section("v2.2.0 — crop tool: handles, move, resize, bounds");
+
+{
+  const crop = { x1: 100, y1: 80, x2: 300, y2: 220 }; // 200x140 box
+  const r = cropRect(crop);
+  eq([r.x, r.y, r.w, r.h], [100, 80, 200, 140], "cropRect normalizes flipped corners");
+
+  const handles = cropHandlePositions(crop);
+  eq(CROP_HANDLES.length, 8, "8 crop handles (corners + edges)");
+  eq(handles.se, [300, 220], "se handle sits on the corner");
+  eq(handles.n, [200, 80], "n handle sits on the edge midpoint");
+
+  const tol = 1;
+  eq(cropHitTest(crop, { x: 302, y: 222 }, tol), "se", "corner grab hits the se handle");
+  eq(cropHitTest(crop, { x: 200, y: 80 }, tol), "n", "edge grab hits the n handle");
+  eq(cropHitTest(crop, { x: 200, y: 150 }, tol), "move", "interior hit means move");
+  eq(cropHitTest(crop, { x: 40, y: 40 }, tol), null, "outside means draw a new marquee");
+  assert(cropHitTest(crop, { x: 311, y: 222 }, 12) === "se", "handles stay grabbable at any zoom (tolScale)");
+
+  // Draw new.
+  const drawn = applyCropDrag(crop, "new", null, { x: 10, y: 10 }, { x: 60, y: 40 }, { w: 500, h: 400 });
+  eq(drawn, { x1: 10, y1: 10, x2: 60, y2: 40 }, "drag outside starts a fresh marquee");
+
+  // Move: follows the pointer, clamped to the image bounds.
+  const moved = applyCropDrag(crop, "move", null, { x: 200, y: 150 }, { x: 260, y: 190 }, { w: 400, h: 300 });
+  eq(cropRect(moved), { x: 160, y: 120, w: 200, h: 140 }, "move shifts the whole box");
+  const clamped = applyCropDrag(crop, "move", null, { x: 200, y: 150 }, { x: 1000, y: 0 }, { w: 400, h: 300 });
+  eq(cropRect(clamped), { x: 200, y: 0, w: 200, h: 140 }, "move clamps at the image bounds");
+
+  // Resize: only the grabbed edges follow the pointer.
+  const resized = applyCropDrag(crop, "resize", "se", null, { x: 380, y: 280 }, { w: 400, h: 300 });
+  eq(cropRect(resized), { x: 100, y: 80, w: 280, h: 200 }, "se resize grows the box");
+  const flipped = applyCropDrag(crop, "resize", "w", null, { x: 350, y: 150 }, { w: 400, h: 300 });
+  eq(cropRect(flipped), { x: 300, y: 80, w: 50, h: 140 }, "dragging past the far edge flips the marquee (applyCrop normalizes)");
+}
+
+/* ------------------------------------------------------------------ */
+section("v2.2.0 — numbered markers count across the whole tutorial");
+
+{
+  eq(nextMarkerNumber([]), 1, "empty tutorial starts at 1");
+  eq(nextMarkerNumber(null), 1, "null steps start at 1");
+  const steps = [
+    { annotations: [{ type: "marker", number: 2 }, { type: "marker", number: 1 }] },
+    { annotations: [{ type: "arrow", number: 99 }, { type: "marker", number: 5 }] },
+    { annotations: [] }
+  ];
+  eq(nextMarkerNumber(steps), 6, "next number = highest marker anywhere + 1 (no per-step restart)");
+}
+
+/* ------------------------------------------------------------------ */
 
 console.log("  → " + passed + " passed\n");
 console.log("═══════════════════════════════════════");

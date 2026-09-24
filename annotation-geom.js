@@ -142,3 +142,130 @@ export function cropRemap(annotations, offX, offY, cssW, cssH) {
     return e.x2 > 0 && e.y2 > 0 && e.x1 < cssW && e.y1 < cssH;
   });
 }
+
+/* ----------------------------------------------------------------
+   Viewer scaling — how the editor displays a screenshot.
+   "fit"  = fit width (capped at 1:1): the professional default. A
+            1280×12000 full-page capture fills the pane's width and
+            scrolls vertically instead of shrinking into an
+            unrecognizable strip.
+   "page" = fit the whole page inside the pane (old behavior).
+   "custom" = explicit zoom factor around natural size (zoom buttons,
+            Ctrl+wheel). Never below 5%, never above 400%.
+   Pure so the zoom logic can be unit-tested without a DOM.
+---------------------------------------------------------------- */
+export const VIEWER_MIN_ZOOM = 0.05;
+export const VIEWER_MAX_ZOOM = 4;
+
+function clampZoom(z) {
+  return Math.min(VIEWER_MAX_ZOOM, Math.max(VIEWER_MIN_ZOOM, z));
+}
+
+export function viewerScale({ mode = "fit", factor = 1, natW, natH, wrapW, wrapH }) {
+  if (!(natW > 0) || !(natH > 0) || !(wrapW > 0) || !(wrapH > 0)) return 1;
+  const fitW = wrapW / natW;
+  const fitPage = Math.min(fitW, wrapH / natH);
+  if (mode === "page") return clampZoom(fitPage);
+  if (mode === "custom") return clampZoom(Number(factor) || 1);
+  // "fit" = fit width: fill the pane width, never upscale past 1:1.
+  return Math.min(fitW, 1);
+}
+
+/* ----------------------------------------------------------------
+   Crop marquee management — the standard crop-tool interaction set:
+   drag outside the box to draw a new one, drag inside to move it,
+   grab one of 8 handles to resize. Pure + unit-testable.
+---------------------------------------------------------------- */
+export const CROP_HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+
+export function cropRect(crop) {
+  if (!crop) return { x: 0, y: 0, w: 0, h: 0 };
+  const x = Math.min(crop.x1, crop.x2);
+  const y = Math.min(crop.y1, crop.y2);
+  return { x, y, w: Math.abs(crop.x2 - crop.x1), h: Math.abs(crop.y2 - crop.y1) };
+}
+
+// The 8 handle anchors in image pixels (corners + edge midpoints).
+export function cropHandlePositions(crop) {
+  const r = cropRect(crop);
+  const mx = r.x + r.w / 2, my = r.y + r.h / 2;
+  return {
+    nw: [r.x, r.y],
+    n: [mx, r.y],
+    ne: [r.x + r.w, r.y],
+    e: [r.x + r.w, my],
+    se: [r.x + r.w, r.y + r.h],
+    s: [mx, r.y + r.h],
+    sw: [r.x, r.y + r.h],
+    w: [r.x, my]
+  };
+}
+
+// What a pointer at `pt` interacts with, priority order: handles (they
+// reach slightly outside the box; the NEAREST wins when tolerances
+// overlap), the box interior (move), otherwise nothing (start a fresh
+// marquee). tolScale converts screen px to image px like annotationHit's
+// tolScale.
+export function cropHitTest(crop, pt, tolScale = 1) {
+  if (!crop || !pt) return null;
+  const tol = 12 * (tolScale || 1);
+  const handles = cropHandlePositions(crop);
+  let best = null;
+  let bestD = Infinity;
+  for (const handle of CROP_HANDLES) {
+    const [hx, hy] = handles[handle];
+    const d = Math.hypot(pt.x - hx, pt.y - hy);
+    if (d <= tol && d < bestD) { best = handle; bestD = d; }
+  }
+  if (best) return best;
+  const r = cropRect(crop);
+  if (pt.x >= r.x - tol && pt.x <= r.x + r.w + tol && pt.y >= r.y - tol && pt.y <= r.y + r.h + tol) {
+    return "move";
+  }
+  return null;
+}
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+// Produce the next crop rect for a drag. Mutates nothing; clamped to the
+// image bounds. kind: "new" | "move" | "resize".
+export function applyCropDrag(crop, kind, handle, anchor, pt, bounds) {
+  const W = bounds && bounds.w > 0 ? bounds.w : Infinity;
+  const H = bounds && bounds.h > 0 ? bounds.h : Infinity;
+  const px = clamp(pt.x, 0, W);
+  const py = clamp(pt.y, 0, H);
+  if (kind === "new") {
+    return { x1: anchor.x, y1: anchor.y, x2: px, y2: py };
+  }
+  if (kind === "move") {
+    const dx = px - anchor.x, dy = py - anchor.y;
+    const r = cropRect(crop);
+    const shiftX = clamp(dx, -r.x, r.w >= W ? 0 : W - r.x - r.w);
+    const shiftY = clamp(dy, -r.y, r.h >= H ? 0 : H - r.y - r.h);
+    return { x1: crop.x1 + shiftX, y1: crop.y1 + shiftY, x2: crop.x2 + shiftX, y2: crop.y2 + shiftY };
+  }
+  if (kind === "resize") {
+    const next = { ...crop };
+    if (handle.includes("w")) next.x1 = px;
+    if (handle.includes("e")) next.x2 = px;
+    if (handle.includes("n")) next.y1 = py;
+    if (handle.includes("s")) next.y2 = py;
+    return next;
+  }
+  return { ...crop };
+}
+
+/* ----------------------------------------------------------------
+   Numbered markers: professional recorders number sequentially
+   across the WHOLE tutorial, not restarting at 1 in every step.
+   The next number is one past the highest number already placed.
+---------------------------------------------------------------- */
+export function nextMarkerNumber(steps) {
+  let max = 0;
+  for (const s of steps || []) {
+    for (const a of (s && s.annotations) || []) {
+      if (a && a.type === "marker" && Number.isFinite(a.number)) max = Math.max(max, a.number);
+    }
+  }
+  return max + 1;
+}

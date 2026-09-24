@@ -16,6 +16,11 @@
   let excludedDomains = [];
   let autoPauseIdleSec = 0;
   let cursorEnabled = true;
+  // Mirror of settings.cursorMarker (content scripts cannot import ES
+  // modules) — sent along with every ATTACH_RECORDER, so ring style always
+  // matches what the service worker stamps into the screenshot.
+  const DEFAULT_RING = { color: "#ff7352", size: 1, fillOpacity: 0.15, glow: 0 };
+  let cursorMarker = DEFAULT_RING;
 
   const masks = new Map();
   let maskScanTimer = null;
@@ -87,15 +92,39 @@
     for (const ring of clickRings) { retireRing(ring); return; }
   }
 
+  // Builds the DOM ring from the SAME spec the service worker stamps:
+  // same color, same disc radius (11 × size css px), same fill strength,
+  // same glow. Ring stroke 3px like the stamp, halo via box-shadow.
+  function ringCssText(marker) {
+    const m = marker || DEFAULT_RING;
+    const r = Math.max(5, Math.round(11 * (m.size || 1)));
+    const border = 3;
+    const box = (r + border) * 2;
+    const rgba = (opacity) => {
+      const hex = String(m.color || "#ff7352").replace("#", "");
+      const full = hex.length === 3 ? hex.split("").map((c) => c + c).join("") : hex;
+      const rn = parseInt(full.slice(0, 2), 16) || 0;
+      const gn = parseInt(full.slice(2, 4), 16) || 0;
+      const bn = parseInt(full.slice(4, 6), 16) || 0;
+      return `rgba(${rn},${gn},${bn},${opacity})`;
+    };
+    const glow = Number(m.glow) > 0
+      ? `, 0 0 ${Math.round(Number(m.glow) * 1.6)}px ${rgba(0.8)}, 0 0 ${Math.round(Number(m.glow) * 3)}px ${rgba(0.45)}`
+      : "";
+    return `position:absolute;left:0;top:0;width:${box - border * 2}px;height:${box - border * 2}px;`
+      + `margin:${-(box / 2)}px 0 0 ${-(box / 2)}px;border-radius:50%;`
+      + `border:${border}px solid ${rgba(0.95)};background:${rgba(m.fillOpacity == null ? 0.15 : m.fillOpacity)};`
+      + `box-shadow:0 0 0 1px rgba(255,255,255,.55), 0 0 ${(r) * 0.9}px ${rgba(0.35)}${glow};`
+      + `will-change:transform,opacity;transition:opacity .25s;`;
+  }
+
   function spawnClickRing(clientX, clientY) {
     if (!cursorOverlayOn()) return;
     const layer = ensureCursorLayer();
     const ring = document.createElement("div");
     ring.__btrX = clientX + (window.scrollX || 0);
     ring.__btrY = clientY + (window.scrollY || 0);
-    ring.style.cssText = "position:absolute;left:0;top:0;width:40px;height:40px;margin:-20px 0 0 -20px;"
-      + "border-radius:50%;border:4px solid rgba(255,113,82,.95);background:rgba(255,113,82,.2);"
-      + "box-shadow:0 0 0 1px rgba(255,255,255,.6);will-change:transform,opacity;transition:opacity .25s;";
+    ring.style.cssText = ringCssText(cursorMarker);
     layer.appendChild(ring);
     clickRings.add(ring);
     positionClickRings();
@@ -710,6 +739,7 @@
       sensitivePatterns = Array.isArray(message.sensitivePatterns) ? message.sensitivePatterns : [];
       autoPauseIdleSec = Number(message.autoPauseIdleSec) || 0;
       cursorEnabled = message.showCursor !== false;
+      cursorMarker = (message.cursorMarker && typeof message.cursorMarker === "object") ? message.cursorMarker : DEFAULT_RING;
       if (attached) {
         startMaskLoop();
         ensureToolbar();
@@ -747,11 +777,12 @@
   self.__btrTest = {
     buildSelector, fieldLabel, visibleText, describe, isSensitiveField,
     collectSensitiveFields, cumulativeOffset, viewport,
-    getState: () => ({ attached, paused, sensitivePatterns, excludedDomains, cursorEnabled }),
+    getState: () => ({ attached, paused, sensitivePatterns, excludedDomains, cursorEnabled, cursorMarker }),
     cursorOverlayOn, spawnClickRing, ensureCursorLayer, ensureToolbar, inBtrUi,
-    applyCaptureUiVisibility,
+    applyCaptureUiVisibility, ringCssText,
     captureUiHidden: () => captureUiHidden,
     clickRingCount: () => clickRings.size,
+    lastRingEl: () => [...clickRings][clickRings.size - 1] || null,
     ids: { CURSOR_LAYER_ID, TOOLBAR_ID }
   };
 })();

@@ -1,3 +1,5 @@
+import { normalizeCursorMarker, DEFAULT_CURSOR_MARKER } from "./cursor-marker.js";
+
 export const EDITOR_ACTIONS = [
   "undo", "redo", "save", "preview", "export", "addStep", "duplicateStep",
   "deleteStep", "nextStep", "prevStep", "mergeStep", "splitStep",
@@ -29,6 +31,7 @@ export const DEFAULT_SETTINGS = {
   screenshotFormat: "png",
   screenshotQuality: 90,
   showCursor: true,
+  cursorMarker: { ...DEFAULT_CURSOR_MARKER },
   autoElementCrop: false,
   autoPauseIdleSec: 0,
   sensitivePatterns: ["password", "passwd", "pin", "cvv", "ssn", "credit-card", "card-number", "one-time-code"],
@@ -63,6 +66,7 @@ export function normalizeSettings(raw) {
     screenshotFormat: s.screenshotFormat === "jpeg" ? "jpeg" : "png",
     screenshotQuality: clamp(s.screenshotQuality, 30, 100, DEFAULT_SETTINGS.screenshotQuality),
     showCursor: s.showCursor !== false,
+    cursorMarker: normalizeCursorMarker(s.cursorMarker),
     autoElementCrop: s.autoElementCrop === true,
     autoPauseIdleSec: clamp(s.autoPauseIdleSec, 0, 600, DEFAULT_SETTINGS.autoPauseIdleSec),
     sensitivePatterns: Array.isArray(s.sensitivePatterns)

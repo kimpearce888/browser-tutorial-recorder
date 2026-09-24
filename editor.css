@@ -150,21 +150,66 @@ h2 { font-size: 13.5px; text-transform: uppercase; letter-spacing: .04em; color:
 
 .canvas-wrap {
   flex: 1;
-  display: grid;
-  place-items: center;
+  display: block;
   overflow: auto;
   padding: 16px;
   position: relative;
 }
 #canvas {
-  max-width: 100%;
-  max-height: 100%;
+  /* The viewer controls the displayed size in JS (fit width / zoom).
+     max-width/max-height here used to SQUASH tall full-page captures into
+     an unrecognizable strip — the exact bug the zoom viewer replaces. */
+  display: block;
+  margin: 0 auto;
   background: #fff;
   box-shadow: 0 4px 18px rgba(16,24,40,.16);
   border-radius: 6px;
   cursor: crosshair;
 }
 #canvas.selecting { cursor: default; }
+
+/* Zoom bar — floating, top-right, like every standard image viewer. */
+.zoom-bar {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  background: rgba(21, 22, 26, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 6;
+}
+.zb-btn {
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font: 600 12.5px system-ui, sans-serif;
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  min-width: 26px;
+}
+.zb-btn:hover { background: rgba(255,255,255,.16); }
+.zb-label { min-width: 48px; font-variant-numeric: tabular-nums; }
+.zb-mode.active { background: rgba(255,255,255,.22); }
+.zb-sep { width: 1px; height: 16px; background: rgba(255,255,255,.25); margin: 0 3px; }
+
+/* Marker numbering control */
+.marker-num-field { gap: 5px; }
+.marker-num {
+  width: 52px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 6px;
+}
 .text-input {
   position: absolute;
   z-index: 5;
@@ -227,5 +272,11 @@ h2 { font-size: 13.5px; text-transform: uppercase; letter-spacing: .04em; color:
   z-index: 6;
 }
 .crop-bar .crop-hint { font-size: 12px; color: #fff; white-space: nowrap; }
+.crop-bar .crop-dims {
+  font: 600 12px system-ui, sans-serif;
+  color: #ffd23f;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .crop-bar.hidden { display: none; }
 #btn-crop.active { border-color: var(--accent); color: var(--accent); }

@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.2.0 — 2026-09-24
+
+### New — cursor highlight options; readable full-page captures; a manageable crop; marker numbering control
+
+Live-requested on v2.1.2: *"cursor background should have some option not only what is prefixed, it is hard to read the same thing on all pages, sometimes we need a small yellow filled circle with blur sometime else"*, *"full page capture should have fit width, zoom in/out to make a long page to view at this moment it loads the full page and nothing is recognizable"*, *"crop still hard to manage"*, *"mark has no option so it starts numbering with no control"*.
+
+- **The cursor highlight is now fully configurable.** One fixed orange ring for every page was hard to read. Settings → Cursor highlight offers **7 presets** — including the exact ask, a **small yellow filled circle with blur** — plus fine-tuning: color (8 swatches + custom picker), size (50–200%), fill opacity (0–85%) and glow/blur (0–24 px), with a **live preview** that draws the marker over a mock page snippet exactly as the service worker stamps it. One shared module (`cursor-marker.js`) drives the settings preview, the screenshot stamp, and (as a mirrored spec) the live in-page ring, so all three always match; the config travels with every ATTACH message, and changing it in Settings updates running recordings on the next attach.
+- **Full-page captures are readable.** The editor viewer used to shrink a 12,000 px tall page into the pane (`max-width/max-height: 100%` squashed the canvas) — "loads the full page and nothing is recognizable". The viewer now opens screenshots **fit-width by default**: the page fills the pane's width and scrolls vertically. A floating zoom bar adds **zoom in/out (×1.25 steps), a click-to-reset percentage, Fit width and Fit page modes**; Ctrl+wheel zooms around the cursor, Ctrl+= / Ctrl+- / Ctrl+0 mirror it. Annotation drawing, hit-testing, handles, crop and text placement all keep working at any zoom (they share the image-pixel coordinate space).
+- **Crop is a standard crop tool.** The old marquee could only be redrawn from scratch. Now: **8 resize handles** (corners + edges, nearest-handle priority, screen-constant grab size at any zoom), **drag inside to move** the box (clamped to the image), **drag outside to redraw**, **live W × H readout** both on the marquee and in the crop bar, hover cursors that announce the next action, and Enter/Esc to apply/cancel as before.
+- **Numbered markers count across the whole tutorial.** Markers restarted at 1 on every step with no control — step 5 got another "1". The sequence now continues tutorial-wide (like Scribe), and a **"Next #" field** in the style bar gives explicit control: type a number to restart the series from there, clear it to return to auto (highest existing + 1); pasting a marker adopts the sequence too.
+- **Tests: 442/442 pass** (new: cursor-marker normalization + presets + canvas-spy stamp drawing; jsdom proof that the live ring mirrors the configured marker; end-to-end proof that the service worker stamps the CONFIGURED marker onto screenshots; viewer-scale units incl. fit-width default and clamps; crop hit-test/move/resize/bounds units; tutorial-wide marker sequencing).
+
 ## v2.1.2 — 2026-09-24
 
 ### Fixed — settings page revived; cursor ring lands at the right time

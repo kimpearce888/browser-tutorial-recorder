@@ -73,3 +73,39 @@ input[type="number"], select, textarea {
 .btn.danger { border-color: var(--danger); color: var(--danger); }
 .btn:hover { filter: brightness(0.97); }
 .file-label { display: inline-flex; align-items: center; cursor: pointer; }
+
+/* Cursor highlight options */
+.chip-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.chip-row .chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 4px 11px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.chip-row .chip:hover { border-color: var(--accent); }
+.chip-row .swatch {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  cursor: pointer;
+  padding: 0;
+}
+.chip-row .swatch.active { border-color: var(--text); }
+input[type="color"] {
+  width: 34px; height: 26px;
+  padding: 1px 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  cursor: pointer;
+}
+.cursor-preview {
+  width: 100%;
+  max-width: 420px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: block;
+}
