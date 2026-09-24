@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.2.1 — 2026-09-24
+
+### Fixed — the editor viewer actually scrolls long full-page captures; zoom/crop controls moved out of the screenshot
+
+Live-reported on v2.2.0: *"full page image are not scrolable to view in the editor"*, *"fit page/zoom in/out button should not be placed where it is now"*.
+
+- **Long full-page captures scroll in the editor again.** v2.2.0's zoom viewer sized the canvas in JS but left the CSS containing chain unclamped: the grid row was `auto` and neither `.canvas-pane` nor `.canvas-wrap` had `min-height: 0`, so both flex/grid items' automatic minimum size equaled the canvas height. A 12,000 px tall capture stretched the scroll container to its own height — `overflow: auto` never engaged, no scrollbar appeared anywhere, and `body { overflow: hidden }` clipped everything below the first screenful. (The old `max-width/max-height: 100%` squash had accidentally hidden this by shrinking tall canvases to the pane.) The layout now clamps every level: the grid row is `minmax(0, 1fr)`, the pane is `min-height: 0` + `overflow: hidden`, the wrap is `min-height: 0` — a tall page fills the pane width and **scrolls vertically** like any document viewer. `scrollbar-gutter: stable` keeps fit-width from oscillating a few pixels when the scrollbar appears, and switching steps returns the viewer to the top of the image (undo/redo and annotation edits deliberately keep their scroll position).
+- **The zoom bar no longer sits on top of the screenshot.** It used to float at the wrap's top-right — covering the capture's corner and, once scrolling works, scrolling away with the content (unreachable precisely when you are deep into a long page). The zoom bar and the crop action bar now live **outside the scrolling wrap**, pinned to the visible pane: zoom controls dock to the **bottom-right corner** (standard image-viewer placement, clear of the scrollbar), the crop bar stays centered at the **top of the visible pane** while cropping. The text input stays inside the wrap on purpose — it must track the annotation point while scrolling.
+- **Tests: 464/464 pass** (new regression section: CSS scroll-containment guards for the whole min-size chain, pinned-bar placement, DOM containment — bars outside the wrap, text input inside — and the step-switch scroll reset). Also fixed: `package.json` was still at 2.1.2 (v2.2.0 missed it) — now aligned with the manifest.
+
 ## v2.2.0 — 2026-09-24
 
 ### New — cursor highlight options; readable full-page captures; a manageable crop; marker numbering control

@@ -793,6 +793,12 @@ function startReorderDrag(startEvent, card, fromIndex) {
 function selectStep(index) {
   current = Math.max(0, Math.min(index, tutorial.steps.length - 1));
   selectedAnnotationId = null;
+  // A long full-page capture can leave the viewer scrolled deep into the
+  // previous step — every step switch starts at the top, like any standard
+  // document viewer. (Undo/redo and annotation edits deliberately keep the
+  // scroll position.)
+  els.canvasWrap.scrollTop = 0;
+  els.canvasWrap.scrollLeft = 0;
   renderAll();
 }
 

@@ -2127,6 +2127,82 @@ section("v2.2.0 — numbered markers count across the whole tutorial");
 }
 
 /* ------------------------------------------------------------------ */
+section("v2.2.1 — editor viewer scrolls long captures + pinned zoom/crop bars");
+
+{
+  const fs = (await import("node:fs")).default;
+  const path = (await import("node:path")).default;
+  const root = new URL("./", import.meta.url).pathname;
+
+  // v2.2.0 made the viewer size the canvas in JS (fit-width / zoom) but the
+  // CSS containing chain never clamped heights: the grid row was auto and
+  // neither .canvas-pane nor .canvas-wrap had min-height:0, so both flex/grid
+  // items' AUTOMATIC MINIMUM SIZE equaled the canvas height. A tall full-page
+  // capture stretched the wrap to its own height — overflow:auto never
+  // engaged, no scrollbar appeared anywhere, and body{overflow:hidden} clipped
+  // the rest: "full page image is not scrollable in the editor".
+  const cssRaw = fs.readFileSync(path.join(root, "editor.css"), "utf8");
+  // Strip /* */ comments first: rule bodies are matched to the next "}", and
+  // comments may legally contain braces (e.g. "body{overflow:hidden}").
+  const css = cssRaw.replace(/\/\*[\s\S]*?\*\//g, "");
+  const cssRule = (selector) => {
+    const start = css.indexOf(selector + " {");
+    assert(start >= 0, `editor.css defines ${selector}`);
+    const bodyStart = css.indexOf("{", start) + 1;
+    const bodyEnd = css.indexOf("}", bodyStart);
+    return css.slice(bodyStart, bodyEnd);
+  };
+
+  const layout = cssRule(".editor-layout");
+  assert(/minmax\(0,\s*1fr\)/.test(layout), "grid row is minmax(0,1fr) — a tall canvas can no longer stretch the row (scroll fix)");
+  assert(/min-height:\s*0/.test(layout), ".editor-layout has min-height: 0");
+
+  const pane = cssRule(".canvas-pane");
+  assert(/min-height:\s*0/.test(pane), ".canvas-pane has min-height: 0 (grid/flex item min-size chain)");
+  assert(/position:\s*relative/.test(pane), ".canvas-pane is position: relative (anchors the pinned bars)");
+  assert(/overflow:\s*hidden/.test(pane), ".canvas-pane has overflow: hidden (belt to the minmax brace)");
+
+  const wrap = cssRule(".canvas-wrap");
+  assert(/min-height:\s*0/.test(wrap), ".canvas-wrap has min-height: 0 — THE fix that lets overflow:auto engage");
+  assert(/overflow:\s*auto/.test(wrap), ".canvas-wrap scrolls (overflow: auto)");
+  assert(/scrollbar-gutter:\s*stable/.test(wrap), "scrollbar-gutter: stable keeps fit-width from oscillating when the scrollbar appears");
+
+  const zoomCss = cssRule(".zoom-bar");
+  assert(/bottom:\s*\d+px/.test(zoomCss) && !/top:\s*\d+px/.test(zoomCss),
+    "zoom bar is pinned to the pane BOTTOM (the old top-right spot covered the screenshot and scrolled away)");
+  assert(/z-index:\s*\d+/.test(zoomCss), "zoom bar floats above the canvas");
+
+  const cropCss = cssRule(".crop-bar");
+  assert(/top:\s*\d+px/.test(cropCss) && !/bottom:\s*\d+px/.test(cropCss),
+    "crop bar stays pinned at the visible pane TOP while cropping a tall capture");
+
+  // DOM structure: the bars moved OUT of the scrolling wrap (so they stop
+  // scrolling away with the content) while #text-input stays inside (its
+  // position is computed from canvas.offsetLeft/Top within the wrap).
+  const html = fs.readFileSync(path.join(root, "editor.html"), "utf8");
+  const paneStart = html.indexOf('class="canvas-pane"');
+  const paneEnd = html.indexOf("</section>", paneStart);
+  const paneHtml = html.slice(paneStart, paneEnd);
+  const wrapStart = paneHtml.indexOf('id="canvas-wrap"');
+  const wrapEnd = paneHtml.indexOf("</div>", wrapStart);
+  const wrapHtml = paneHtml.slice(wrapStart, wrapEnd);
+  assert(wrapHtml.includes("<canvas"), "canvas-wrap still hosts the canvas");
+  assert(wrapHtml.includes('id="text-input"'), "text-input stays inside the scrolling wrap (positions with canvas.offsetLeft/Top)");
+  assert(!wrapHtml.includes("zoom-bar"), "zoom bar is OUT of the scrolling wrap (stays visible while scrolling a long capture)");
+  assert(!wrapHtml.includes("crop-bar"), "crop bar is OUT of the scrolling wrap (stays visible while cropping a tall capture)");
+  const wrapClose = paneStart === -1 ? -1 : html.indexOf("</div>", html.indexOf('id="canvas-wrap"'));
+  assert(html.indexOf('id="zoom-bar"') > wrapClose && html.indexOf('id="crop-bar"') > wrapClose,
+    "zoom + crop bars are siblings AFTER the wrap inside canvas-pane (pinned to the visible pane)");
+
+  // Step switches recenter the viewer (standard document-viewer behavior on
+  // long captures) without touching undo/redo scroll positions.
+  const editorSrc = fs.readFileSync(path.join(root, "editor.js"), "utf8");
+  const selectStep = editorSrc.slice(editorSrc.indexOf("function selectStep"), editorSrc.indexOf("function renderProps"));
+  assert(/scrollTop\s*=\s*0/.test(selectStep) && /scrollLeft\s*=\s*0/.test(selectStep),
+    "selectStep resets the viewer scroll to the top of the image");
+}
+
+/* ------------------------------------------------------------------ */
 
 console.log("  → " + passed + " passed\n");
 console.log("═══════════════════════════════════════");
