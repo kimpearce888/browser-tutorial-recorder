@@ -3,7 +3,7 @@ import {
   normalizeTutorial, toSummary
 } from "./shared.js";
 import { getSettings, saveSettings } from "./settings-store.js";
-import { createRecorder, isInternalUrl } from "./recorder-core.js";
+import { createRecorder, isInternalUrl, nextScrollY } from "./recorder-core.js";
 
 const DRAFT_ID = "draft-current";
 const UI_KEY = "btr-ui-state";
@@ -223,6 +223,54 @@ function enqueueEvent(evt, senderInfo) {
   }).catch(() => {});
 }
 
+function drawCursorArtifact(ctx, point, scale) {
+  const px = point.x * scale;
+  const py = point.y * scale;
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.arc(px, py, 11 * scale, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(255,115,82,0.15)";
+  ctx.fill();
+  ctx.lineWidth = 3 * scale;
+  ctx.strokeStyle = "rgba(255,115,82,0.95)";
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(px, py, 16 * scale, 0, Math.PI * 2);
+  ctx.lineWidth = 5 * scale;
+  ctx.strokeStyle = "rgba(255,115,82,0.2)";
+  ctx.stroke();
+  ctx.translate((point.x - 2) * scale, (point.y - 2) * scale);
+  ctx.scale(scale, scale);
+  ctx.beginPath();
+  ctx.moveTo(2, 2);
+  ctx.lineTo(2, 34);
+  ctx.lineTo(10, 26);
+  ctx.lineTo(17, 37);
+  ctx.lineTo(23, 33);
+  ctx.lineTo(16, 22);
+  ctx.lineTo(28, 22);
+  ctx.closePath();
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#172238";
+  ctx.stroke();
+  ctx.restore();
+}
+
+async function stampCursor(dataUrl, point, dpr) {
+  const bitmap = await createImageBitmapFromUrl(dataUrl);
+  const scale = Number(dpr) > 0 ? Number(dpr) : 1;
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(bitmap, 0, 0);
+  drawCursorArtifact(ctx, point, scale);
+  bitmap.close ? bitmap.close() : null;
+  const blob = await canvas.convertToBlob({ type: "image/png" });
+  return blobToDataUrl(blob);
+}
+
 async function processEvent(evt, senderInfo) {
   if (fullPageInProgress) return;
   if (recorder.isActive()) armIdleTimer();
@@ -259,6 +307,17 @@ async function processEvent(evt, senderInfo) {
     screenshot = null;
     captureBlocked = true;
     await broadcastUi();
+  }
+
+  if (screenshot && verdict.needsCursor && settings.showCursor !== false) {
+    const point = evt.target && evt.target.point;
+    if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
+      try {
+        screenshot.image = await stampCursor(screenshot.image, point, screenshot.dpr);
+      } catch (e) {
+        console.warn("[BTR] cursor stamp failed (kept plain shot):", String(e && e.message || e));
+      }
+    }
   }
 
   const committed = recorder.commitStep(evt, screenshot);
@@ -311,10 +370,10 @@ async function captureFullPage(tabId) {
         dpr: window.devicePixelRatio || 1
       })
     });
-    cssWidth = vp.w; cssHeight = vp.h; dpr = vp.dpr || 1;
+    cssWidth = vp.w; cssHeight = Math.max(1, vp.h); dpr = vp.dpr || 1;
     const MAX_CANVAS_HEIGHT = 12000;
     const MAX_CANVAS_WIDTH = 3840;
-    const maxShots = Math.max(1, Math.min(40, Math.floor(MAX_CANVAS_HEIGHT / Math.max(1, cssHeight))));
+    const maxShots = Math.max(1, Math.min(40, Math.floor(MAX_CANVAS_HEIGHT / cssHeight)));
     await chrome.scripting.executeScript({
       target: { tabId },
       func: () => {
@@ -324,23 +383,28 @@ async function captureFullPage(tabId) {
         document.documentElement.appendChild(style);
       }
     });
-    let y = vp.y || 0;
+    let requested = 0;
+    let lastActualY = -1;
+    let pageTotal = vp.total || 0;
     for (let shot = 0; shot < maxShots; shot++) {
       await chrome.scripting.executeScript({
         target: { tabId },
         func: (scrollTo) => window.scrollTo(0, scrollTo),
-        args: [y]
+        args: [requested]
       });
-      await new Promise((r) => setTimeout(r, 220));
-      const dataUrl = await chrome.tabs.captureVisibleTab(undefined, { format: "png" });
-      captures.push({ dataUrl, y });
+      await new Promise((r) => setTimeout(r, 260));
       const [{ result: pos }] = await chrome.scripting.executeScript({
         target: { tabId },
         func: () => ({ y: window.scrollY, total: document.documentElement.scrollHeight, h: document.documentElement.clientHeight })
       });
-      if (pos.y + pos.h >= pos.total - 2 || pos.y === y && shot > 0) break;
-      y = Math.min(pos.y + pos.h, pos.total - pos.h);
-      if (y <= pos.y) break;
+      if (shot > 0 && pos.y <= lastActualY) break;
+      lastActualY = pos.y;
+      pageTotal = Math.max(pageTotal, pos.total);
+      const dataUrl = await chrome.tabs.captureVisibleTab(undefined, { format: "png" });
+      captures.push({ dataUrl, y: pos.y });
+      const next = nextScrollY(pos, requested);
+      if (next == null) break;
+      requested = next;
     }
     await chrome.scripting.executeScript({
       target: { tabId },
@@ -352,14 +416,16 @@ async function captureFullPage(tabId) {
       args: [vp.y || 0]
     });
 
+    if (!captures.length) throw new Error("Could not capture the page for a full-page screenshot.");
     const images = await Promise.all(captures.map((c) => createImageBitmapFromUrl(c.dataUrl)));
-    const totalHeight = captures[captures.length - 1].y + cssHeight;
+    const lastShot = captures[captures.length - 1];
+    const totalHeight = Math.min(lastShot.y + cssHeight, pageTotal || lastShot.y + cssHeight);
     const canvasWidth = Math.min(cssWidth, MAX_CANVAS_WIDTH);
-    const canvasHeight = Math.min(totalHeight, cssHeight * maxShots, MAX_CANVAS_HEIGHT);
+    const canvasHeight = Math.max(1, Math.min(totalHeight, MAX_CANVAS_HEIGHT));
     const canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
     const ctx = canvas.getContext("2d");
     captures.forEach((c, i) => {
-      ctx.drawImage(images[i], 0, c.y - captures[0].y, cssWidth, cssHeight);
+      ctx.drawImage(images[i], 0, c.y - captures[0].y, canvasWidth, cssHeight);
     });
     const blob = await canvas.convertToBlob({ type: "image/png" });
     const dataUrl = await blobToDataUrl(blob);

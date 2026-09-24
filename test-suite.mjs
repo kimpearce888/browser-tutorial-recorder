@@ -158,7 +158,7 @@ import { normalizeSettings, normalizeCombo, findShortcutConflicts, DEFAULT_SETTI
 /* ------------------------------------------------------------------ */
 section("recorder-core.js — the recording state machine");
 
-import { createRecorder, isInternalUrl, describeUrl, sameTarget } from "./recorder-core.js";
+import { createRecorder, isInternalUrl, describeUrl, sameTarget, nextScrollY } from "./recorder-core.js";
 
 function newRecorder() {
   let t = 1000000;
@@ -798,6 +798,43 @@ section("common-ui.js — bgCall retries transient no-response");
   try { await bgCall({ type: "GET_TUTORIAL", id: "nope" }); assert(false, "ok:false rejects"); }
   catch (e) { eq(e.message, "Tutorial not found.", "bgCall forwards background error text"); }
   delete globalThis.chrome;
+}
+
+/* ------------------------------------------------------------------ */
+
+section("full-page scroll planning + cursor stamp decisions (v2.0.5 regressions)");
+{
+  eq(nextScrollY({ y: 0, total: 5000, h: 800 }, 0), 800, "long page advances to next viewport");
+  eq(nextScrollY({ y: 800, total: 5000, h: 800 }, 800), 1600, "second shot keeps advancing (old stitcher always stopped here)");
+  eq(nextScrollY({ y: 4100, total: 5000, h: 800 }, 3400), 4200, "near-bottom clamps to max scroll");
+  eq(nextScrollY({ y: 4200, total: 5000, h: 800 }, 3400), null, "bottom reached stops the scan");
+  eq(nextScrollY({ y: 0, total: 600, h: 800 }, 0), null, "page shorter than viewport = single shot");
+  eq(nextScrollY(null, 0), null, "missing position data stops safely");
+}
+{
+  let requested = 0, shots = 0;
+  const page = { total: 5000, h: 800 };
+  while (shots < 40) {
+    const pos = { y: Math.min(requested, page.total - page.h), total: page.total, h: page.h };
+    shots++;
+    const next = nextScrollY(pos, requested);
+    if (next == null) break;
+    requested = next;
+  }
+  eq(shots, 7, "5000px page stitches 7 viewport shots (old code always delivered 2)");
+}
+{
+  const rec = newRecorder();
+  rec.startRecording({ id: 1, windowId: 1 });
+  eq(rec.handleEvent(CLICK_EVT, { tabId: 1 }).needsCursor, true, "click steps request the cursor stamp");
+  eq(rec.handleEvent({ ...CLICK_EVT, event: "SCROLL", target: { selector: "html", tag: "html", scrollY: 400 } }, { tabId: 1 }).needsCursor, false, "scroll steps never request the cursor stamp");
+  eq(rec.handleEvent({ event: "NAVIGATION", url: "https://example.com/nav", target: null, description: "" }, { tabId: 1 }).needsCursor, false, "navigation steps never request the cursor stamp");
+}
+{
+  const { normalizeSettings } = await import("./settings-store.js");
+  eq(normalizeSettings({}).showCursor, true, "showCursor defaults to on");
+  eq(normalizeSettings({ showCursor: false }).showCursor, false, "showCursor opt-out is kept");
+  eq(normalizeSettings({ showCursor: 0 }).showCursor, true, "showCursor only boolean false turns it off");
 }
 
 /* ------------------------------------------------------------------ */

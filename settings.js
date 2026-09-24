@@ -19,6 +19,7 @@ function fill() {
   $("shot-quality").value = settings.screenshotQuality;
   $("shot-quality-val").textContent = String(settings.screenshotQuality);
   $("quality-field").style.display = settings.screenshotFormat === "jpeg" ? "" : "none";
+  $("show-cursor").checked = settings.showCursor !== false;
   $("idle-timeout").value = String(settings.autoPauseIdleSec);
   $("excluded").value = settings.excludedDomains.join("\n");
   $("sensitive").value = settings.sensitivePatterns.join("\n");
@@ -83,6 +84,7 @@ $("capture-delay").addEventListener("input", (e) => { $("capture-delay-val").tex
 $("shot-format").addEventListener("change", (e) => patch({ screenshotFormat: e.target.value }));
 $("shot-quality").addEventListener("change", (e) => patch({ screenshotQuality: Number(e.target.value) }));
 $("shot-quality").addEventListener("input", (e) => { $("shot-quality-val").textContent = e.target.value; });
+$("show-cursor").addEventListener("change", (e) => patch({ showCursor: e.target.checked }));
 $("idle-timeout").addEventListener("change", (e) => patch({ autoPauseIdleSec: Math.max(0, Math.min(600, Number(e.target.value) || 0)) }));
 $("excluded").addEventListener("change", (e) => {
   const domains = e.target.value.split(/\n+/).map((d) => d.trim().toLowerCase()).filter(Boolean);

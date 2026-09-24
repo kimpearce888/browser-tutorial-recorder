@@ -28,6 +28,7 @@ export const DEFAULT_SETTINGS = {
   captureDelayMs: 250,
   screenshotFormat: "png",
   screenshotQuality: 90,
+  showCursor: true,
   autoPauseIdleSec: 0,
   sensitivePatterns: ["password", "passwd", "pin", "cvv", "ssn", "credit-card", "card-number", "one-time-code"],
   excludedDomains: [],
@@ -60,6 +61,7 @@ export function normalizeSettings(raw) {
     captureDelayMs: clamp(s.captureDelayMs, 0, 3000, DEFAULT_SETTINGS.captureDelayMs),
     screenshotFormat: s.screenshotFormat === "jpeg" ? "jpeg" : "png",
     screenshotQuality: clamp(s.screenshotQuality, 30, 100, DEFAULT_SETTINGS.screenshotQuality),
+    showCursor: s.showCursor !== false,
     autoPauseIdleSec: clamp(s.autoPauseIdleSec, 0, 600, DEFAULT_SETTINGS.autoPauseIdleSec),
     sensitivePatterns: Array.isArray(s.sensitivePatterns)
       ? s.sensitivePatterns.filter((p) => typeof p === "string" && p.trim()).map((p) => p.trim().slice(0, 100)).slice(0, 30)

@@ -1,5 +1,18 @@
 # Changelog
 
+## v2.0.5 — 2026-09-24
+
+### Fixed — no cursor in screenshots, broken editor tools, full-page capture cut short
+
+Live-reported after v2.0.4: "no cursor, no cursor background or circle behind the cursors while taking records, tools are not working, full page is not taking full page." Three independent defects, all fixed.
+
+- **Cursor + click-highlight ring are back in screenshots.** v1.x drew a pointer arrow and an orange-red highlight ring into the page for a split second at capture time; the v2.0.0 rewrite deleted that choreography entirely (it was part of v1.x's fragile per-capture message round-trips) and never replaced it, so every screenshot since has been cursor-less. The stamp is now composited **inside the service worker** with `OffscreenCanvas` right after `captureVisibleTab` — zero extra page round-trips, so none of v1.x's capture choreography instability returns. Clicks, double-clicks, right/middle-clicks and drops get the arrow + ring (scaled by the display's device pixel ratio); scrolls and navigations stay clean. A new **Settings → Recording → "Show a cursor and click highlight ring"** toggle (default on) controls it, and a failed stamp never blocks the step — the plain screenshot is kept.
+- **Editor: the Text tool silently threw.** `commit()` called `snapshot.pop()` — `snapshot` is a function, so every commit crashed with `TypeError: snapshot.pop is not a function` right after the annotation was pushed: typed text never appeared and the step was never marked dirty. The bogus call is removed.
+- **Editor: the Blur and Spotlight tools drew nothing.** The editor had its own private annotation renderer that predated those two tools — annotations of type `blur`/`spotlight` were created, saved and even exported correctly, but the editor canvas rendered nothing, so the tools looked dead. The editor now renders through the **same `drawAnnotations` pipeline as every export format**, so what you see while editing is exactly what exports (blur samples the screenshot itself; spotlight dims everything outside the ellipse).
+- **Full-page capture always stopped after 2 shots.** The stitcher's scroll loop ended on `pos.y === requested && shot > 0` — but matching the requested scroll position is the *normal* case, so on every page the loop terminated on the second viewport: a 5,000 px page produced a ~1,600 px image. The loop now plans with a pure `nextScrollY(pos, requested)` helper (bottom detection, clamp handling, no-progress stop), starts from the top of the page, stitches from the **actual** scroll positions (immune to scroll clamping), and caps at the same 12,000 px canvas limit. A 5,000 px page now stitches 7 shots, not 2.
+
+**Tests: 175/175 pass** (new: full-page scroll-planning section — scroll advance past the old 2-shot break, bottom/short-page/no-progress stops, a 5,000 px page stitching 7 shots, cursor-request semantics for click/scroll/navigation events, and `showCursor` settings normalization).
+
 ## v2.0.4 — 2026-09-24
 
 ### Fixed — tutorials recorded with no screenshots at all

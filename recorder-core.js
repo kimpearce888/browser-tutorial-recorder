@@ -10,6 +10,15 @@ export function hostnameOf(url) {
   try { return new URL(url).hostname.toLowerCase(); } catch { return ""; }
 }
 
+export function nextScrollY(pos, requested) {
+  if (!pos || !(pos.total > pos.h)) return null;
+  if (pos.y + pos.h >= pos.total - 2) return null;
+  if (requested >= pos.total - pos.h) return null;
+  const next = Math.min(pos.y + pos.h, pos.total - pos.h);
+  if (next <= pos.y + 1) return null;
+  return next;
+}
+
 export function isInternalUrl(url) {
   return !url || INTERNAL_URL_RE.test(url);
 }

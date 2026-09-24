@@ -1,6 +1,6 @@
 import { bgCall } from "./common-ui.js";
 import { makeId, formatDuration } from "./shared.js";
-import { exportTutorial } from "./exporter.js";
+import { exportTutorial, drawAnnotations } from "./exporter.js";
 import { getSettings, normalizeCombo, onSettingsChanged } from "./settings-store.js";
 
 const els = {
@@ -123,7 +123,8 @@ async function renderCanvas() {
   els.canvas.height = Math.round(image.naturalHeight * fit);
   ctx.clearRect(0, 0, els.canvas.width, els.canvas.height);
   ctx.drawImage(image, 0, 0, els.canvas.width, els.canvas.height);
-  for (const a of step.annotations) drawAnnotation(ctx, a, fit);
+  ctx.canvas.__btrImage = image;
+  drawAnnotations(ctx, step.annotations, fit);
   if (selectedAnnotationId) {
     const a = step.annotations.find((x) => x.id === selectedAnnotationId);
     if (a) {
@@ -135,81 +136,6 @@ async function renderCanvas() {
       ctx.restore();
     }
   }
-}
-
-function drawAnnotation(ctx, a, scale) {
-  ctx.save();
-  ctx.lineWidth = Math.max(1, a.strokeWidth * scale);
-  switch (a.type) {
-    case "highlight":
-      ctx.fillStyle = hexA(a.color, a.opacity * 0.35);
-      ctx.fillRect(a.x * scale, a.y * scale, a.w * scale, a.h * scale);
-      break;
-    case "rectangle":
-      ctx.strokeStyle = hexA(a.color, a.opacity);
-      ctx.strokeRect(a.x * scale, a.y * scale, a.w * scale, a.h * scale);
-      break;
-    case "circle":
-      ctx.strokeStyle = hexA(a.color, a.opacity);
-      ctx.beginPath();
-      ctx.ellipse((a.x + a.w / 2) * scale, (a.y + a.h / 2) * scale, Math.abs(a.w / 2) * scale, Math.abs(a.h / 2) * scale, 0, 0, Math.PI * 2);
-      ctx.stroke();
-      break;
-    case "arrow": {
-      const x2 = a.x2, y2 = a.y2;
-      const ang = Math.atan2(y2 - a.y, x2 - a.x);
-      const head = Math.max(10, a.strokeWidth * 4);
-      ctx.strokeStyle = hexA(a.color, a.opacity);
-      ctx.beginPath();
-      ctx.moveTo(a.x * scale, a.y * scale);
-      ctx.lineTo((x2 - Math.cos(ang) * head * 0.6) * scale, (y2 - Math.sin(ang) * head * 0.6) * scale);
-      ctx.stroke();
-      ctx.fillStyle = hexA(a.color, a.opacity);
-      ctx.beginPath();
-      ctx.moveTo(x2 * scale, y2 * scale);
-      ctx.lineTo((x2 - Math.cos(ang - Math.PI / 7) * head) * scale, (y2 - Math.sin(ang - Math.PI / 7) * head) * scale);
-      ctx.lineTo((x2 - Math.cos(ang + Math.PI / 7) * head) * scale, (y2 - Math.sin(ang + Math.PI / 7) * head) * scale);
-      ctx.closePath();
-      ctx.fill();
-      break;
-    }
-    case "text":
-      ctx.fillStyle = hexA(a.color, a.opacity);
-      ctx.font = `${a.fontSize * scale}px system-ui, sans-serif`;
-      ctx.textBaseline = "top";
-      (a.text || "Text").split("\n").forEach((line, i) => {
-        ctx.fillText(line, a.x * scale, (a.y + i * a.fontSize * 1.3) * scale);
-      });
-      break;
-    case "redaction":
-      ctx.fillStyle = a.color;
-      ctx.fillRect(a.x * scale, a.y * scale, a.w * scale, a.h * scale);
-      break;
-    case "marker": {
-      const r = 13 * scale;
-      ctx.fillStyle = hexA(a.color, a.opacity);
-      ctx.beginPath();
-      ctx.arc(a.x * scale, a.y * scale, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#fff";
-      ctx.font = `bold ${Math.round(r)}px system-ui, sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(String(a.number), a.x * scale, a.y * scale + 1);
-      break;
-    }
-  }
-  ctx.restore();
-}
-
-function hexA(hex, opacity) {
-  const h = hex.replace("#", "");
-  const f = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
-  const r = parseInt(f.slice(0, 2), 16) || 0;
-  const g = parseInt(f.slice(2, 4), 16) || 0;
-  const b = parseInt(f.slice(4, 6), 16) || 0;
-  const o = Math.max(0, Math.min(1, opacity == null ? 1 : opacity));
-  return `rgba(${r},${g},${b},${o})`;
 }
 
 function canvasPoint(e) {
@@ -352,7 +278,6 @@ function openTextInput(pt, ann) {
       ann.h = ann.fontSize * 1.4;
       const step = currentStep();
       step.annotations.push(ann);
-      snapshot.pop();
       snapshot();
       markDirty();
     }
