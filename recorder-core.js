@@ -163,7 +163,10 @@ export function createRecorder(deps = {}) {
     return {
       id: newId("step"),
       action: evt.event,
-      description: evt.description || "",
+      // Content-sourced SPA NAVIGATION events arrive with description: "" —
+      // those steps used to commit with an EMPTY line in the tutorial. Give
+      // every navigation the same professional phrasing the system steps use.
+      description: evt.description || (evt.event === "NAVIGATION" ? `Navigate to ${describeUrl(evt.url || "")}` : ""),
       url: evt.url || "",
       target: evt.target ? { ...evt.target } : null,
       frameUrl: evt.frameUrl || (evt.url || ""),

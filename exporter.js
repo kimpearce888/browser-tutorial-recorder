@@ -169,6 +169,65 @@ export async function annotatedCanvas(step, maxWidth = 0) {
   return canvas;
 }
 
+// The GIF frames-per-step pipeline produces canvases of DIFFERING pixel
+// sizes whenever a tutorial mixes viewport shots, full-page captures and
+// (opt-in) element crops — encodeGif reads every frame at frame 0's
+// dimensions, so shorter frames came out padded with black and taller ones
+// silently cropped: the exported GIF showed wrong content per step.
+//
+// normalizeGifFrames maps every frame onto ONE uniform white-letterboxed
+// canvas:
+//   - width  = the widest frame, capped at maxWidth; nothing is upscaled
+//     (a 400px element crop stays 400px, centered on white)
+//   - height = the tallest width-scaled frame, capped at maxHeight — a
+//     12,000px full-page step used to freeze the encoder for seconds on a
+//     9.6M-pixel frame; the cap bounds every frame to a fixed pixel budget
+//   - a frame taller than the box shows its TOP at full width (cropped,
+//     never sliver-shrunk by an extreme aspect ratio)
+// `options.makeCanvas` is injectable so tests can pass fake canvases.
+export function normalizeGifFrames(frames, options = {}) {
+  if (!Array.isArray(frames) || frames.length === 0) {
+    throw new Error("GIF export needs at least one frame.");
+  }
+  const make = options.makeCanvas || ((w, h) => {
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    return c;
+  });
+  const W = Math.max(1, Math.min(
+    Math.max(1, Math.round(options.maxWidth || 800)),
+    Math.max(...frames.map((f) => f.width))
+  ));
+  const H_CAP = Math.max(1, Math.round(options.maxHeight || 1400));
+  const scaled = frames.map((f) => {
+    const s = Math.min(1, W / f.width);
+    return { f, s, h: f.height * s };
+  });
+  const H = Math.max(1, Math.min(H_CAP, Math.round(Math.max(...scaled.map((x) => x.h)))));
+  return scaled.map(({ f, s }) => {
+    const canvas = make(W, H);
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, W, H);
+    const dw = Math.max(1, Math.round(f.width * s));
+    const fullH = f.height * s;
+    let dh = Math.round(fullH);
+    let dy = Math.round((H - dh) / 2);
+    let sh = f.height;
+    if (fullH > H) {
+      // Tall frame: source region is the box height at the same scale —
+      // top of the page, full width, zero distortion.
+      sh = Math.max(1, Math.floor(H / s));
+      dh = H;
+      dy = 0;
+    }
+    const dx = Math.round((W - dw) / 2);
+    ctx.drawImage(f, 0, 0, f.width, sh, dx, dy, dw, dh);
+    return canvas;
+  });
+}
+
 export function scaleForStep(step, image) {
   const cssW = step.screenshot && step.screenshot.width;
   return cssW > 0 ? image.naturalWidth / cssW : 1;
@@ -221,13 +280,19 @@ export async function exportTutorial(tutorial, kind, options = {}) {
       return;
     }
     case "gif": {
-      const frames = [];
+      const raw = [];
       const maxWidth = options.gifMaxWidth || 800;
       for (const s of tutorial.steps) {
         if (!s.screenshot || !s.screenshot.image) continue;
-        frames.push(await annotatedCanvas(s, maxWidth));
+        raw.push(await annotatedCanvas(s, maxWidth));
       }
-      if (!frames.length) throw new Error("No screenshots to export as GIF.");
+      if (!raw.length) throw new Error("No screenshots to export as GIF.");
+      // Steps arrive in mixed pixel sizes (viewport + full-page + element
+      // crops). encodeGif rasterizes every frame at frame 0's dimensions, so
+      // raw frames used to export with black padding / cropped content —
+      // normalize everything onto one uniform box first (and cap the height,
+      // or a full-page step freezes the encode).
+      const frames = normalizeGifFrames(raw, { maxWidth });
       const blob = encodeGif(frames, options.gifFrameDelayMs || 500);
       downloadBlob(`${name}.gif`, blob);
       return;

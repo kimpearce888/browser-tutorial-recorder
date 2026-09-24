@@ -344,11 +344,23 @@
       container = document.createElement("div");
       container.id = MASK_CONTAINER_ID;
       const style = container.style;
-      style.position = "fixed";
-      style.inset = "0";
+      // PAGE-anchored, not fixed: masks must scroll WITH the content they
+      // cover. A fixed container drifted up to the 1200ms mask-refresh gap
+      // behind a scroll (passwords peeked out / black boxes covered random
+      // content), and the full-page stitcher's fixed-element hider removed
+      // fixed masks from strip 2 on — exposing the password field in every
+      // later strip of the stitched capture. Absolute children of the root
+      // element resolve against the document origin, so they stay glued
+      // under every scroll without any refresh timing.
+      style.position = "absolute";
+      style.left = "0";
+      style.top = "0";
+      style.width = "1px";
+      style.height = "1px";
+      style.overflow = "visible";
       style.zIndex = "2147483646";
       style.pointerEvents = "none";
-      (document.body || document.documentElement).appendChild(container);
+      (document.documentElement || document.body).appendChild(container);
     }
     return container;
   }
@@ -359,6 +371,12 @@
     const container = ensureMaskContainer();
     const fields = collectSensitiveFields();
     const seen = new Set();
+    // Masks are positioned in PAGE coordinates (viewport rect + scroll
+    // offset) inside the absolute container — they ride every scroll with
+    // the field, so a capture taken between refreshes never shows the field
+    // peeking out from under its mask.
+    const sx = window.scrollX || 0;
+    const sy = window.scrollY || 0;
     for (const el of fields) {
       const rect = el.getBoundingClientRect();
       if (rect.width < 1 || rect.height < 1) continue;
@@ -366,17 +384,19 @@
       let mask = masks.get(el);
       if (!mask) {
         mask = document.createElement("div");
-        mask.style.cssText = "position:fixed;background:#15161a;border-radius:4px;box-shadow:0 0 0 2px #15161a;";
+        mask.style.cssText = "position:absolute;background:#15161a;border-radius:4px;box-shadow:0 0 0 2px #15161a;";
         container.appendChild(mask);
         masks.set(el, mask);
       }
       const pad = 3;
-      const geom = `${Math.max(0, rect.left - pad)},${Math.max(0, rect.top - pad)},${rect.width + pad * 2},${rect.height + pad * 2}`;
+      const left = Math.max(0, rect.left + sx - pad);
+      const top = Math.max(0, rect.top + sy - pad);
+      const geom = `${left},${top},${rect.width + pad * 2},${rect.height + pad * 2}`;
       if (mask.dataset.btrGeom !== geom) {
         mask.dataset.btrGeom = geom;
         const m = mask.style;
-        m.left = `${Math.max(0, rect.left - pad)}px`;
-        m.top = `${Math.max(0, rect.top - pad)}px`;
+        m.left = `${left}px`;
+        m.top = `${top}px`;
         m.width = `${rect.width + pad * 2}px`;
         m.height = `${rect.height + pad * 2}px`;
         m.display = "block";
@@ -675,6 +695,15 @@
     if (el instanceof Element) sendEvent("DROP", el, event);
   }, true);
 
+  // SPA navigations: history.pushState/replaceState CANNOT be hooked from
+  // the isolated world — the old monkey-patch only ever wrapped OUR OWN
+  // wrapper, page code kept calling the MAIN-world history untouched, so
+  // pushState routes never produced a NAVIGATION event from here. What DOES
+  // work from the isolated world: popstate/hashchange (below) for those
+  // events, and the service worker's tabs.onUpdated listener, which receives
+  // changeInfo.url for same-document (pushState) navigations too. It is the
+  // authoritative SPA coverage; this handler stays for the events that
+  // genuinely reach us.
   let lastSpaUrl = location.href;
   function onSpaNavigation() {
     if (location.href === lastSpaUrl) return;
@@ -691,14 +720,8 @@
       target: null
     });
   }
-  try {
-    const origPush = history.pushState && history.pushState.bind(history);
-    const origReplace = history.replaceState && history.replaceState.bind(history);
-    if (origPush) history.pushState = function (...args) { const r = origPush(...args); onSpaNavigation(); return r; };
-    if (origReplace) history.replaceState = function (...args) { const r = origReplace(...args); onSpaNavigation(); return r; };
-    window.addEventListener("popstate", onSpaNavigation);
-    window.addEventListener("hashchange", onSpaNavigation);
-  } catch { /* non-configurable history */ }
+  window.addEventListener("popstate", onSpaNavigation);
+  window.addEventListener("hashchange", onSpaNavigation);
 
   window.addEventListener("resize", scheduleMaskWork, { passive: true });
   new MutationObserver(scheduleMaskWork).observe(document.documentElement, { childList: true, subtree: true });

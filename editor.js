@@ -1176,7 +1176,11 @@ window.addEventListener("keydown", (e) => {
     e.ctrlKey || e.metaKey ? "Ctrl" : "",
     e.altKey ? "Alt" : "",
     e.shiftKey ? "Shift" : "",
-    e.key.length === 1 ? e.key : e.key
+    // Settings captures the space bar as "Space" (settings.js), but e.key
+    // here is " " — the raw forms never matched, so ANY shortcut the user
+    // bound to Space (plain or Ctrl+Space) was dead. Name both sides the
+    // same.
+    e.key === " " ? "Space" : e.key
   ].filter(Boolean).join("+"));
   const shortcuts = settings.editorShortcuts || {};
   for (const [action, comboDef] of Object.entries(shortcuts)) {

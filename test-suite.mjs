@@ -2385,6 +2385,229 @@ section("v2.2.1 — editor viewer scrolls long captures + pinned zoom/crop bars"
 }
 
 /* ------------------------------------------------------------------ */
+section("v2.3.0 — GIF frames normalized to one uniform box (exporter)");
+
+import { normalizeGifFrames } from "./exporter.js";
+
+{
+  // The audit (v2.2.2, no test suite): a tutorial mixing viewport shots,
+  // full-page captures and element crops produced GIF frames of DIFFERING
+  // pixel sizes, and encodeGif rasterized every frame at frame 0's
+  // dimensions — shorter frames exported with black padding, taller ones
+  // silently cropped: wrong content per step.
+
+  function fakeCanvasFactory(log) {
+    return (w, h) => ({
+      width: w,
+      height: h,
+      getContext: () => ({
+        fillRect: () => {},
+        drawImage: (img, sx, sy, sw, sh, dx, dy, dw, dh) => {
+          log.push({ src: img, sx, sy, sw, sh, dx, dy, dw, dh, outW: w, outH: h });
+        }
+      })
+    });
+  }
+  const mk = (w, h) => ({ width: w, height: h });
+
+  // Mixed sizes: two viewport shots + one tall full-page capture.
+  {
+    const log = [];
+    const make = fakeCanvasFactory(log);
+    const out = normalizeGifFrames([mk(800, 600), mk(800, 3000), mk(800, 600)], { makeCanvas: make });
+    eq(out.length, 3, "one output canvas per frame");
+    assert(out.every((c) => c.width === 800 && c.height === 1400),
+      "all frames share ONE box (widest width; height capped at 1400)");
+    const tall = log.find((e) => e.src.height === 3000);
+    assert(tall && tall.sh === 1400 && tall.dh === 1400 && tall.dy === 0 && tall.dw === 800,
+      "tall full-page frame is TOP-CROPPED at full width (never sliver-shrunk, never distorted)");
+    const vp = log.find((e) => e.src.height === 600);
+    assert(vp && vp.dw === 800 && vp.dh === 600 && vp.dy === 400 && vp.dx === 0,
+      "viewport frames draw 1:1, vertically centered on the white box");
+    assert(log.every((e) => e.outW === 800 && e.outH === 1400), "every draw lands on the uniform box");
+  }
+
+  // Element crops must NOT be upscaled — they letterbox centered instead.
+  {
+    const log = [];
+    const out = normalizeGifFrames([mk(400, 300), mk(800, 600)], { makeCanvas: fakeCanvasFactory(log) });
+    assert(out.every((c) => c.width === 800 && c.height === 600), "box takes the widest/tallest frame");
+    const small = log.find((e) => e.src.width === 400);
+    assert(small && small.dw === 400 && small.dh === 300 && small.dx === 200 && small.dy === 150,
+      "smaller element crop is centered at its own size (no blurry upscale)");
+  }
+
+  // P6: a lone 12,000px full-page step used to freeze the encoder on a
+  // 9.6M-pixel frame. The cap bounds every frame to a fixed pixel budget.
+  {
+    const log = [];
+    const out = normalizeGifFrames([mk(800, 12000)], { makeCanvas: fakeCanvasFactory(log) });
+    assert(out.every((c) => c.width === 800 && c.height === 1400), "single huge frame capped to the box");
+    assert(out[0].width * out[0].height <= 800 * 1400, "frame pixel budget bounded (≤ 1.12M px)");
+    eq(log[0].sh, 1400, "huge frame source region is the top 1400px at full width");
+  }
+
+  // Viewport-only tutorials (the common case) export EXACTLY as before.
+  {
+    const log = [];
+    normalizeGifFrames([mk(800, 600), mk(800, 600)], { makeCanvas: fakeCanvasFactory(log) });
+    assert(log.every((e) => e.dx === 0 && e.dy === 0 && e.dw === 800 && e.dh === 600),
+      "uniform viewport frames stay full-bleed 1:1 (no visible change)");
+  }
+
+  nodeAssert.throws(() => normalizeGifFrames([], { makeCanvas: () => ({}) }), /at least one frame/,
+    "empty frame list throws");
+  // Mixed-size input through the normalizer itself must SUCCEED (that is its
+  // whole purpose — see the mixed test above). The loud failure belongs to
+  // encodeGif when a caller skips normalization:
+  nodeAssert.throws(() => encodeGif([fakeFrame(100, 100, [255, 0, 0]), fakeFrame(120, 100, [0, 255, 0])], 120),
+    /share one size/, "encodeGif mixed-size guard fires for direct callers");
+}
+
+/* ------------------------------------------------------------------ */
+section("v2.3.0 — SPA navigation steps carry a description (recorder-core)");
+
+{
+  const rec = newRecorder();
+  rec.startRecording({ id: 1, windowId: 1 });
+  // Content-sourced SPA NAVIGATION events arrive with description: "" —
+  // those steps used to commit with an empty line in the tutorial.
+  const evt = { event: "NAVIGATION", url: "https://app.example.com/settings/profile", target: null, description: "" };
+  rec.handleEvent(evt, { tabId: 3 });
+  rec.commitStep(evt, SHOT);
+  eq(rec.state.steps[0].description, "Navigate to app.example.com/settings/profile",
+    "content-sourced SPA navigation gets the system phrasing (was empty)");
+  const sys = rec.addSystemStep("NAVIGATION", 3, "https://app.example.com/billing");
+  rec.handleEvent(sys, { tabId: 3 });
+  rec.commitStep(sys, SHOT);
+  eq(rec.state.steps[1].description, "Navigate to app.example.com/billing",
+    "system navigation description unchanged");
+  const clickEvt = { ...CLICK_EVT, description: "" };
+  rec.handleEvent(clickEvt, { tabId: 3 });
+  rec.commitStep(clickEvt, SHOT);
+  eq(rec.state.steps[2].description, "", "non-navigation events without description stay empty");
+}
+
+/* ------------------------------------------------------------------ */
+section("v2.3.0 — stopRecording saves BEFORE it resets (background)");
+
+{
+  const bgSrc = readFileSync(new URL("./background.js", import.meta.url), "utf8");
+  const stopBlock = bgSrc.slice(
+    bgSrc.indexOf("async function stopRecording"),
+    bgSrc.indexOf("async function discardRecording")
+  );
+  const putAt = stopBlock.indexOf("await dbPut(normalizeTutorial(tutorial))");
+  const resetAt = stopBlock.indexOf("recorder.reset()");
+  assert(putAt >= 0 && resetAt > putAt,
+    "dbPut precedes recorder.reset() — a failed save can no longer destroy the recording");
+
+  // onUpdated precedence: (A && B) || C used to inject into ANY page while
+  // idle whenever changeInfo.url arrived.
+  assert(/recorder\.isActive\(\) && \(!recorder\.state\.lastNavUrlByTab\.has\(tabId\) \|\| changeInfo\.url\)\)/.test(bgSrc),
+    "onUpdated navigation condition is parenthesized to the intended semantics");
+
+  // RECAPTURE: the 14s timeout path must unregister its onUpdated listener.
+  assert(/const cleanup = \(\) => \{ clearTimeout\(timer\); chrome\.tabs\.onUpdated\.removeListener\(listener\); \};/.test(bgSrc),
+    "RECAPTURE wait cleans up its tabs.onUpdated listener on both paths");
+}
+
+/* ------------------------------------------------------------------ */
+section("v2.3.0 — Space shortcuts actually fire (settings ⇄ editor match)");
+
+{
+  // Settings captures the space bar as "Space"; the editor built its combo
+  // from raw e.key (" ") — the two never matched, so any shortcut bound to
+  // Space (plain or Ctrl+Space) was dead.
+  const editorSrc = readFileSync(new URL("./editor.js", import.meta.url), "utf8");
+  assert(/e\.key === " " \? "Space" : e\.key/.test(editorSrc),
+    "editor names the space bar 'Space' like the settings capture does");
+  const settingsSrc = readFileSync(new URL("./settings.js", import.meta.url), "utf8");
+  assert(settingsSrc.includes('e.key === " " ? "Space" : e.key'),
+    "settings capture still names the space bar 'Space' (both sides agree)");
+  eq(normalizeCombo("Ctrl+Space"), "Ctrl+Space", "normalizeCombo canonicalizes the Space name");
+  eq(normalizeCombo("Ctrl+ "), "", "a raw space char is not a valid combo name");
+}
+
+/* ------------------------------------------------------------------ */
+section("v2.3.0 — sensitive-field masks are page-anchored (content.js in jsdom)");
+
+{
+  const dom = new JSDOM(`<!DOCTYPE html><html><body>
+    <form><input type="password" id="pw" name="password"></form>
+  </body></html>`, { url: "https://example.com/login", runScripts: "dangerously", pretendToBeVisual: true });
+  const { window } = dom;
+  const listeners = [];
+  window.chrome = {
+    runtime: {
+      sendMessage: () => Promise.resolve({ ok: true }),
+      onMessage: { addListener: (fn) => listeners.push(fn) }
+    }
+  };
+  if (!window.CSS) window.CSS = {};
+  if (!window.CSS.escape) {
+    window.CSS.escape = (s) => String(s).replace(/[^a-zA-Z0-9_\-\u0080-\uffff]/g, (c) => "\\" + c);
+  }
+  const src = readFileSync(new URL("./content.js", import.meta.url), "utf8");
+  const scriptEl = window.document.createElement("script");
+  scriptEl.textContent = src;
+  window.document.body.appendChild(scriptEl);
+
+  const doc = window.document;
+  const pw = doc.getElementById("pw");
+  pw.getBoundingClientRect = () => ({ left: 20, top: 40, width: 120, height: 18 });
+  const attach = (recording) => {
+    for (const fn of listeners) {
+      fn({ type: "ATTACH_RECORDER", recording, sensitivePatterns: ["password"] }, {}, () => {});
+    }
+  };
+
+  attach(true);
+  const container = doc.getElementById("__btr-masks");
+  assert(container && container.parentElement === doc.documentElement,
+    "mask container hangs off the ROOT element (page-anchored, immune to body offsets)");
+  const mask = container && container.firstElementChild;
+  assert(mask && mask.style.position === "absolute",
+    "masks are position:absolute in PAGE coordinates (fixed masks drifted up to 1.2s behind a scroll)");
+  eq(mask.style.left, "17px", "mask left = viewport rect + scrollX - pad");
+  eq(mask.style.top, "37px", "mask top = viewport rect + scrollY - pad");
+
+  // Scroll the page: the mask must move WITH the field. The fixed version
+  // waited for the throttled refresh (up to 1200ms) — a capture in that
+  // window showed the password peeking out (and the full-page stitcher
+  // dropped fixed masks from strip 2 on entirely).
+  Object.defineProperty(window, "scrollY", { value: 500, configurable: true });
+  Object.defineProperty(window, "scrollX", { value: 0, configurable: true });
+  attach(true);
+  eq(mask.style.top, "537px", "mask follows the field down the page with zero refresh timing");
+
+  attach(false);
+  assert(!doc.getElementById("__btr-masks"), "detaching removes the mask container");
+  dom.window.close();
+}
+
+/* ------------------------------------------------------------------ */
+section("v2.3.0 — SPA hook reality + print waits for decode (static)");
+
+{
+  // The isolated-world pushState/replaceState monkey-patch only ever
+  // wrapped OUR wrapper — page code called the MAIN-world history, so the
+  // patch never fired once. tabs.onUpdated (changeInfo.url, which Chrome
+  // also fires for same-document navigations) is the real coverage.
+  const contentSrc = readFileSync(new URL("./content.js", import.meta.url), "utf8");
+  assert(!/history\.pushState\s*=/.test(contentSrc), "dead isolated-world pushState patch removed");
+  assert(!/history\.replaceState\s*=/.test(contentSrc), "dead isolated-world replaceState patch removed");
+  assert(/addEventListener\("popstate", onSpaNavigation\)/.test(contentSrc)
+    && /addEventListener\("hashchange", onSpaNavigation\)/.test(contentSrc),
+    "popstate/hashchange SPA listeners kept (these DO reach the isolated world)");
+
+  const printSrc = readFileSync(new URL("./print-export.js", import.meta.url), "utf8");
+  assert(!/setTimeout\(r,\s*350\)/.test(printSrc), "fixed 350ms print wait removed");
+  assert(/\.decode\(/.test(printSrc) && /window\.print\(\)/.test(printSrc),
+    "print-export now waits for every screenshot image to decode");
+}
+
+/* ------------------------------------------------------------------ */
 
 console.log("  → " + passed + " passed\n");
 console.log("═══════════════════════════════════════");

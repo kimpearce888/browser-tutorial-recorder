@@ -9,11 +9,11 @@ Everything stays on your device. No accounts, no cloud uploads, no telemetry.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-34A853)](https://developer.chrome.com/docs/extensions/mv3/)
-[![Tests: 485](https://img.shields.io/badge/Tests-485%20passing-success)](./test-suite.mjs)
+[![Tests: 517](https://img.shields.io/badge/Tests-517%20passing-success)](./test-suite.mjs)
 [![CI](https://github.com/kimpearce888/browser-tutorial-recorder/actions/workflows/ci.yml/badge.svg)](https://github.com/kimpearce888/browser-tutorial-recorder/actions/workflows/ci.yml)
-[![Version: 2.2.2](https://img.shields.io/badge/Version-2.2.2-ff7352)](./manifest.json)
+[![Version: 2.3.0](https://img.shields.io/badge/Version-2.3.0-ff7352)](./manifest.json)
 
-**Version: v2.2.2** — a complete, from-scratch rewrite of the recording engine built for reliability.
+**Version: v2.3.0** — a complete, from-scratch rewrite of the recording engine built for reliability.
 
 ---
 
@@ -186,7 +186,7 @@ The v2.0.0 recording engine was rebuilt from scratch around four reliability pri
 
 ## Quality assurance
 
-- **485 automated tests** covering `recorder-core.js`, `shared.js`, `settings-store.js`, `gif-encoder.js`, `exporter.js`, `cursor-marker.js`, `annotation-geom.js`, the real `content.js` (evaluated in jsdom), the full background ⇄ content message bus, and a static import/export cross-check of every module
+- **517 automated tests** covering `recorder-core.js`, `shared.js`, `settings-store.js`, `gif-encoder.js`, `exporter.js`, `cursor-marker.js`, `annotation-geom.js`, the real `content.js` (evaluated in jsdom), the full background ⇄ content message bus, and a static import/export cross-check of every module
 - **Static analysis** — all JS files pass `node --check` syntax validation
 - **CI workflow** — tests auto-run on every push and pull request via GitHub Actions
 

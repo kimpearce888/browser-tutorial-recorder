@@ -244,16 +244,21 @@ async function stopRecording(meta = {}) {
   clearTimeout(flushTimer);
   await captureQueue.catch(() => {});
   const tutorial = recorder.buildTutorial({ ...meta });
-  recorder.reset();
-  attachedTabIds = new Set();
-  preShots.clear();
-  clearTimeout(idleTimer);
+  // Save FIRST, reset AFTER. The old order wiped the recorder before dbPut
+  // resolved — a failed save answered "Saving failed" while the entire
+  // recording had already been destroyed with no way to retry. On failure
+  // the session now stays alive (paused) and Stop can simply be pressed
+  // again.
   try {
     await dbPut(normalizeTutorial(tutorial));
   } catch (e) {
     await broadcastUi();
     return respondErr(`Saving failed: ${e && e.message}`);
   }
+  recorder.reset();
+  attachedTabIds = new Set();
+  preShots.clear();
+  clearTimeout(idleTimer);
   await clearDraft();
   await broadcastUi();
   await chrome.tabs.query({}).then(async (tabs) => {
@@ -750,12 +755,16 @@ async function handlePageMessage(message) {
         await new Promise((resolve) => {
           const listener = (tabId, info) => {
             if (tabId === tab.id && info.status === "complete") {
-              chrome.tabs.onUpdated.removeListener(listener);
+              cleanup();
               resolve();
             }
           };
+          // The timeout path MUST unregister the onUpdated listener too —
+          // repeated RECAPTUREs on slow pages used to accumulate listeners
+          // that fired (and did nothing) on every tab load forever after.
+          const timer = setTimeout(() => { cleanup(); resolve(); }, 14000);
+          const cleanup = () => { clearTimeout(timer); chrome.tabs.onUpdated.removeListener(listener); };
           chrome.tabs.onUpdated.addListener(listener);
-          setTimeout(resolve, 14000);
         });
         await new Promise((r) => setTimeout(r, 600));
         try {
@@ -825,10 +834,16 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete" || !recorder.isActive()) return;
   if (!validForRecording(tab)) return;
   (async () => {
-    if (recorder.isActive() && !recorder.state.lastNavUrlByTab.has(tabId) || changeInfo.url) {
+    // Parentheses matter here: the old `(A && B) || C` fired on ANY tab
+    // load even while idle (changeInfo.url set), injecting the content
+    // script into unrelated pages. Intended semantics: only while
+    // recording, and only for a first navigation on this tab or an
+    // explicit URL change (same-document SPA navigations included).
+    if (recorder.isActive() && (!recorder.state.lastNavUrlByTab.has(tabId) || changeInfo.url)) {
       const evt = recorder.addSystemStep("NAVIGATION", tabId, tab.url);
       if (evt) enqueueEvent(evt, { tabId, windowId: tab.windowId, frameId: 0 });
     }
+    if (!recorder.isActive()) return;
     await injectContentScript(tabId);
     await attachToTab(tabId);
   })().catch((e) => console.warn("[BTR] onUpdated failed:", e));

@@ -42,7 +42,17 @@ import { annotatedCanvas } from "./exporter.js";
     container.appendChild(section);
   }
 
-  await new Promise((r) => setTimeout(r, 350));
+  // Print only after every screenshot has actually decoded. The old fixed
+  // 350ms wait raced image decode — on large captures (or a slow machine)
+  // window.print() fired before the images rendered and the PDF came out
+  // with blank steps. decode() settles per image; the race is a safety net
+  // so one wedged decode can never hang the print dialog forever.
+  const imgs = [...container.querySelectorAll("img")];
+  await Promise.race([
+    Promise.all(imgs.map((img) => (img.decode ? img.decode().catch(() => {}) : Promise.resolve()))),
+    new Promise((r) => setTimeout(r, 5000))
+  ]);
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   window.print();
 })().catch((e) => {
   document.getElementById("title").textContent = "Print export failed";

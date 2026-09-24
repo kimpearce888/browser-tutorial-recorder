@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.3.0 — 2026-09-24
+
+### Fixed — fresh manual audit of the whole codebase (no test suite): seven real-behavior defects repaired
+
+A from-scratch, file-by-file audit of every runtime module at v2.2.2 — deliberately run **without** the automated suite — measured the extension against how it actually behaves in real Chrome. Seven defects found and fixed in this release.
+
+- **GIF export rendered wrong content when steps had different screenshot sizes.** A tutorial mixing viewport shots, full-page captures and element crops produced GIF frames of differing pixel dimensions — but `encodeGif` rasterizes every frame at frame 0's size, so shorter frames exported with black padding and taller ones were silently cropped. The export path now runs every frame through `normalizeGifFrames`: one uniform white-letterboxed box (width = widest frame, height = tallest width-scaled frame), nothing upscaled, and frames taller than the box show their top at full width. **Side fix (freeze):** a 12,000 px full-page step used to hand the encoder a 9.6 M-pixel frame and stall the tab for seconds — frame height is now capped (≤ 1400 px, ≤ 1.12 M px per frame). `encodeGif` also refuses mixed-size input outright instead of exporting silently wrong content.
+- **A failed save destroyed the whole recording.** `stopRecording` reset the recorder *before* writing to IndexedDB, so a `dbPut` failure answered "Saving failed" while the tutorial had already been wiped — no retry possible. The save now completes first; on failure the session stays alive (paused) and Stop can simply be pressed again.
+- **Sensitive-field masks drifted on scroll — and vanished from full-page captures.** Masks were `position: fixed` DOM boxes refreshed on a throttled (1.2 s) timer: a capture taken during a scroll showed the password field peeking out from under a mask parked at its old viewport spot (and a black box over unrelated content). Worse, the full-page stitcher hides fixed elements from strip 2 on — so the mask container disappeared and the password field was exposed in every later strip of the stitched image. Masks are now page-anchored (`position: absolute` in document coordinates on the root element): they ride every scroll with the field, with zero refresh timing, and are correctly present in every strip of a full-page capture.
+- **SPA navigation steps committed with an empty description.** The content script sends `description: ""` for content-side navigations, and those steps landed in tutorials as blank lines. Every navigation now gets the standard phrasing — "Navigate to example.com/path" — identical to the system-generated steps.
+- **The `pushState`/`replaceState` hook never fired.** The content script monkey-patched `history` from the isolated world, but page code calls the MAIN-world history object — the patch only ever wrapped itself. The dead patch is removed; SPA coverage stays with `popstate`/`hashchange` (which do reach the isolated world) and the service worker's `tabs.onUpdated` listener, which receives the URL change for same-document navigations too.
+- **Shortcuts bound to Space never fired.** The settings page captures the space bar as `"Space"`, but the editor matched raw `e.key` (`" "`) — the two forms never met, so any shortcut assigned to Space (plain or Ctrl+Space) was dead. Both sides now speak the same name.
+- **PDF/print export could print blank screenshots.** `print-export.html` waited a fixed 350 ms before `window.print()` — a race against image decode that lost on large captures, producing PDFs with empty step images. It now waits for every image's `decode()` (with a 5 s safety valve) and prints after two animation frames.
+- **Hygiene:** the `tabs.onUpdated` navigation condition had an operator-precedence bug (`(A && B) || C`) that injected the content script into any page while idle whenever a URL change arrived — parenthesized to the intended semantics and skipped while idle; the RECAPTURE wait leaked a `tabs.onUpdated` listener on its 14 s timeout path — both paths now unregister.
+
+- **Tests: 517/517 pass** (32 new checks: GIF frame normalization units incl. top-crop / no-upscale / pixel-budget / unchanged viewport case, the `encodeGif` mixed-size guard, the navigation description fallback, the save-before-reset ordering, the Space combo match, page-anchored masks exercised in jsdom incl. scroll-follow and detach cleanup, and static guards pinning the SPA-hook removal + decode-wait).
+
 ## v2.2.2 — 2026-09-24
 
 ### Fixed — GIF export produces a valid, playable GIF

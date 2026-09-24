@@ -98,6 +98,15 @@ export function encodeGif(frames, delayMs = 500) {
   const delayCs = Math.max(2, Math.round(delayMs / 10));
   const width = frames[0].width;
   const height = frames[0].height;
+  // Guard the one assumption the whole encoder rests on: every frame is read
+  // at frame 0's dimensions. Mixed-size input used to render silently WRONG
+  // content (black padding / cropped frames); exporter.normalizeGifFrames is
+  // the caller-side normalizer — fail loudly if it was skipped.
+  for (const f of frames) {
+    if (f.width !== width || f.height !== height) {
+      throw new Error("encodeGif: all frames must share one size — normalize them first (normalizeGifFrames).");
+    }
+  }
 
   const gif = new ByteWriter();
   gif.ascii("GIF89a");
