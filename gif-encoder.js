@@ -104,7 +104,14 @@ export function encodeGif(frames, delayMs = 500) {
   gif.short(width).short(height);
   gif.byte(0xf7).byte(0).byte(0);
   for (const [r, g, b] of PALETTE) gif.byte(r).byte(g).byte(b);
-  gif.ascii("NETSCAPE2.0").byte(3).byte(1).short(0).byte(0);
+  // NETSCAPE2.0 looping extension — MUST be introduced as a proper
+  // application extension block: 0x21 (ext intro) 0xFF (app label) 0x0B
+  // (block size 11) + the 11-byte identifier. Writing the bare identifier
+  // (the v2.0.0-v2.2.1 bug) left 'N' (0x4E) sitting where a decoder expects
+  // a block introducer — every strict decoder (Chrome, ffmpeg) rejected the
+  // whole file as corrupt.
+  gif.byte(0x21).byte(0xff).byte(0x0b)
+    .ascii("NETSCAPE2.0").byte(3).byte(1).short(0).byte(0);
 
   for (const frame of frames) {
     const ctx = frame.getContext("2d", { willReadFrequently: true });

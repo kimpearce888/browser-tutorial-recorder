@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.2.2 — 2026-09-24
+
+### Fixed — GIF export produces a valid, playable GIF
+
+Live-reported on v2.2.1: *"gif export is not working showing corrupt file"*.
+
+- **The GIF looping extension was malformed, poisoning every exported file.** The encoder wrote the `NETSCAPE2.0` looping extension as a bare identifier — but the GIF89a spec requires it to be introduced as a proper application-extension block (`0x21` extension introducer, `0xFF` application label, `0x0B` block size, *then* the 11-byte identifier). Without those three bytes, the byte `'N'` (0x4E) sat exactly where a decoder expects a block introducer — an invalid block type — and strict decoders (Chrome's own GIF decoder, ffmpeg) rejected the **entire file** as corrupt. Verified independently: ffmpeg decoded the pre-fix output with *"Invalid data found when processing input"* and the post-fix output with zero errors; PIL now reports the loop flag and decodes every frame. This bug shipped in every GIF export since v2.0.0 — it survived because the old tests only string-matched `"NETSCAPE2.0"` somewhere in the bytes instead of parsing the block structure.
+- **The GIF test suite now decodes what it encodes.** A new strict block parser walks every byte from the logical screen descriptor to the trailer and fails on any byte a decoder could not interpret (invalid introducers, malformed graphic-control extensions, misplaced blocks). On top of that, a reference LZW decoder round-trips real frames back to palette indices with zero drift — including a noisy 19,200-pixel gradient that forces the dictionary through every code-size boundary (512 / 1024 / 2048) and repeatedly into the 4096-entry clear path, proving the bit packing, variable-width code timing and clear-code handling are byte-exact.
+- **Tests: 485/485 pass** (GIF section expanded from 8 to 29 checks).
+
 ## v2.2.1 — 2026-09-24
 
 ### Fixed — the editor viewer actually scrolls long full-page captures; zoom/crop controls moved out of the screenshot

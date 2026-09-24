@@ -326,23 +326,205 @@ function fakeFrame(width, height, fill) {
   };
 }
 
+// Pixel-frame factory for patterns the solid fills can't produce: a noisy
+// gradient drives the LZW dictionary through every code-size boundary
+// (512 / 1024 / 2048) and into the 4096-entry clear path.
+function pixelFrame(width, height, colorAt) {
+  const data = new Uint8ClampedArray(width * height * 4);
+  let p = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const [r, g, b] = colorAt(x, y);
+      data[p] = r; data[p + 1] = g; data[p + 2] = b; data[p + 3] = 255;
+      p += 4;
+    }
+  }
+  return { width, height, getContext: () => ({ getImageData: () => ({ data }) }) };
+}
+
+// Mirror of the encoder's web-safe quantizer, for expected-index math.
+function nearestIndex(r, g, b) {
+  return Math.min(5, Math.round(r / 51)) * 36 +
+         Math.min(5, Math.round(g / 51)) * 6 +
+         Math.min(5, Math.round(b / 51));
+}
+
+// Full structural parser: walks EVERY block from the logical screen
+// descriptor to the trailer and throws on any byte a decoder could not
+// interpret. The v2.0.0-v2.2.1 encoder wrote the NETSCAPE2.0 loop extension
+// as a bare identifier — after the global color table, 'N' (0x4E) sat where
+// a block introducer belongs, and strict decoders (Chrome, ffmpeg) rejected
+// the whole file as corrupt. The old tests only string-matched "NETSCAPE2.0",
+// so they never saw it.
+function parseGif(bytes) {
+  let p = 6;
+  const rd16 = () => bytes[p++] | (bytes[p++] << 8);
+  const width = rd16(), height = rd16();
+  const packed = bytes[p++]; p += 2;
+  if (!(packed & 0x80)) throw new Error("global color table flag missing");
+  p += (2 ** ((packed & 7) + 1)) * 3;
+  const blocks = [];
+  for (;;) {
+    const introducer = bytes[p++];
+    if (introducer === 0x3b) { blocks.push({ type: "trailer" }); break; }
+    if (introducer === 0x21) {
+      const label = bytes[p++];
+      if (label === 0xf9) {
+        const size = bytes[p++];
+        const gcePacked = bytes[p++];
+        const delay = rd16();
+        bytes[p++]; // transparent index (0 = none)
+        const term = bytes[p++];
+        if (size !== 4 || term !== 0) throw new Error("malformed graphic control extension");
+        blocks.push({ type: "gce", delay, disposal: (gcePacked >> 2) & 7 });
+      } else if (label === 0xff) {
+        const size = bytes[p++];
+        const app = String.fromCharCode(...bytes.slice(p, p + size)); p += size;
+        const subs = [];
+        let s;
+        while ((s = bytes[p++]) !== 0) { subs.push([...bytes.slice(p, p + s)]); p += s; }
+        blocks.push({ type: "app", app, subs });
+      } else {
+        let s;
+        while ((s = bytes[p++]) !== 0) p += s;
+        blocks.push({ type: "ext", label });
+      }
+    } else if (introducer === 0x2c) {
+      const left = rd16(), top = rd16(), w = rd16(), h = rd16();
+      const ip = bytes[p++];
+      if (ip & 0x80) p += (2 ** ((ip & 7) + 1)) * 3;
+      const minCode = bytes[p++];
+      const data = [];
+      let s;
+      while ((s = bytes[p++]) !== 0) { for (let k = 0; k < s; k++) data.push(bytes[p++]); }
+      blocks.push({ type: "image", left, top, w, h, minCode, data });
+    } else {
+      throw new Error(`invalid block introducer 0x${introducer.toString(16)} at byte ${p - 1}`);
+    }
+  }
+  return { width, height, blocks };
+}
+
+// Reference LZW decoder (GIF89a variable-width, LSB-first): decodes the
+// sub-block stream back to palette indices so the test proves the encoder's
+// bit packing, code-size timing and clear handling produce a decodable
+// stream — not merely self-consistent bytes.
+function lzwDecode(minCodeSize, data, minOut) {
+  const clear = 1 << minCodeSize, eoi = clear + 1;
+  let size = minCodeSize + 1, next = eoi + 1;
+  let table = [];
+  const reset = () => {
+    table = [];
+    for (let i = 0; i < clear; i++) table[i] = [i];
+    table[clear] = null; table[eoi] = null;
+    size = minCodeSize + 1; next = eoi + 1;
+  };
+  reset();
+  let prev = null;
+  const chunks = [];
+  let bitPos = 0;
+  const read = () => {
+    let code = 0;
+    for (let i = 0; i < size; i++) {
+      code |= ((data[bitPos >> 3] >> (bitPos & 7)) & 1) << i;
+      bitPos++;
+    }
+    return code;
+  };
+  for (let guard = 0; guard < 5_000_000; guard++) {
+    const code = read();
+    if (code === clear) { reset(); prev = null; continue; }
+    if (code === eoi) break;
+    let entry;
+    if (code < table.length && table[code]) entry = table[code];
+    else if (prev !== null) entry = [...table[prev], table[prev][0]];
+    else break;
+    chunks.push(entry);
+    if (prev !== null && next < 4096) {
+      table[next++] = [...table[prev], entry[0]];
+      if (next === (1 << size) && size < 12) size++;
+    }
+    prev = code;
+  }
+  return chunks.flat();
+}
+
 {
-  const blob = encodeGif([fakeFrame(8, 8, [255, 0, 0]), fakeFrame(8, 8, [0, 255, 0])], 500);
+  // All frames share the logical screen (like the real exporter's canvases):
+  // 160x120 = 19,200 px per frame. The noisy gradient drives the LZW
+  // dictionary through every code-size boundary (512 / 1024 / 2048) and
+  // repeatedly into the 4096-entry clear path.
+  const gradient = pixelFrame(160, 120, (x, y) => [
+    Math.round((x / 160) * 255),
+    Math.round((y / 120) * 255),
+    Math.round(((x * 7 + y * 3) % 160) / 160 * 255)
+  ]);
+  const blob = encodeGif([fakeFrame(160, 120, [255, 0, 0]), gradient, fakeFrame(160, 120, [0, 255, 0])], 120);
   const bytes = new Uint8Array(await blob.arrayBuffer());
   assert(bytes.length > 40, "gif has bytes");
   const header = String.fromCharCode(...bytes.slice(0, 6));
   eq(header, "GIF89a", "gif magic verified");
   const width = bytes[6] | (bytes[7] << 8);
   const height = bytes[8] | (bytes[9] << 8);
-  eq(width, 8, "gif logical width");
-  eq(height, 8, "gif logical height");
+  eq(width, 160, "gif logical width (first frame drives logical size)");
+  eq(height, 120, "gif logical height");
   assert((bytes[10] & 0x80) !== 0, "global color table flag set");
-  let gceCount = 0;
-  for (let i = 0; i < bytes.length - 1; i++) {
-    if (bytes[i] === 0x21 && bytes[i + 1] === 0xf9) gceCount++;
-  }
-  eq(gceCount, 2, "one graphic control extension per frame");
   eq(bytes[bytes.length - 1], 0x3b, "gif trailer");
+
+  let parsed;
+  try {
+    parsed = parseGif(bytes);
+    passed++;
+  } catch (e) {
+    failures.push(`gif parses as a strict block stream — ${e.message}`);
+    parsed = null;
+  }
+  if (parsed) {
+    const images = parsed.blocks.filter((b) => b.type === "image");
+    const gces = parsed.blocks.filter((b) => b.type === "gce");
+    eq(parsed.blocks[parsed.blocks.length - 1].type, "trailer", "block stream ends at the trailer (nothing after 0x3b)");
+    eq(images.length, 3, "one image block per frame");
+    eq(gces.length, 3, "one graphic control extension per frame");
+    images.forEach((img, i) => {
+      const imgIdx = parsed.blocks.indexOf(img);
+      eq(parsed.blocks.indexOf(gces[i]), imgIdx - 1, `gce immediately precedes image ${i}`);
+      eq([img.left, img.top, img.w, img.h], [0, 0, 160, 120], `image ${i} covers the logical screen`);
+      eq(img.minCode, 8, `image ${i} LZW min code size is 8 for a 256-color table`);
+    });
+    const app = parsed.blocks.find((b) => b.type === "app");
+    assert(app, "netscape loop extension present as a real application block");
+    if (app) {
+      eq(app.app, "NETSCAPE2.0", "application block identifies as NETSCAPE2.0");
+      eq(app.subs.length, 1, "netscape block carries one sub-block");
+      eq(app.subs[0], [1, 0, 0], "netscape sub-block = loop id 1, loop count 0 (forever)");
+      assert(parsed.blocks.indexOf(app) < parsed.blocks.indexOf(images[0]),
+        "netscape loop block sits before the first frame");
+    }
+
+    // LZW round-trip on the solid red frame: every decoded index must be the
+    // quantized red (web-safe (5,0,0) = 180).
+    const red = lzwDecode(images[0].minCode, images[0].data, 160 * 120);
+    eq(red.length, 160 * 120, "solid frame decodes to exactly width*height indices");
+    assert(red.every((v) => v === nearestIndex(255, 0, 0)), "solid red frame round-trips to pure palette red");
+
+    // LZW round-trip on the noisy gradient (second image block): code-size
+    // growth AND the 4096-entry clear path must both decode with zero drift.
+    const gradImg = images[1];
+    const expected = [];
+    for (let y = 0; y < 120; y++) {
+      for (let x = 0; x < 160; x++) {
+        expected.push(nearestIndex(
+          Math.round((x / 160) * 255),
+          Math.round((y / 120) * 255),
+          Math.round(((x * 7 + y * 3) % 160) / 160 * 255)
+        ));
+      }
+    }
+    const grad = lzwDecode(gradImg.minCode, gradImg.data, expected.length);
+    eq(grad.length, expected.length, "gradient frame decodes to exactly width*height indices");
+    eq(grad, expected, "gradient frame round-trips through LZW with zero drift (bit packing + code-size timing + clear codes proven)");
+  }
+
   const allBytes = String.fromCharCode(...bytes);
   assert(allBytes.includes("NETSCAPE2.0"), "netscape loop block present");
   try {
