@@ -251,15 +251,22 @@ function drawCropOverlay(ctx, fit) {
 }
 
 function canvasPoint(e) {
-  // Use the live rect, not the nominal fit: CSS (max-width/max-height) can
-  // shrink the displayed canvas below its bitmap size, and every coordinate
-  // from drawing to hit-testing must map through that exact ratio.
+  // Map the pointer into NATURAL IMAGE pixels — the single coordinate space
+  // annotations are stored in. Drawing goes through drawAnnotations' fit
+  // scale, hit-testing compares raw stored coords, and the crop overlay and
+  // text input all derive from this point, so every consumer stays consistent.
+  // The old version returned element/bitmap px while rendering multiplied by
+  // fit AGAIN: on any screenshot larger than the pane (fit < 1 — nearly
+  // always) every shape drew offset from its click, selection missed the
+  // visible shape, the rotate handle was ungrabbable and the crop marquee
+  // cropped the wrong region.
   const rect = els.canvas.getBoundingClientRect();
-  const sx = rect.width > 0 ? els.canvas.width / rect.width : 1;
-  const sy = rect.height > 0 ? els.canvas.height / rect.height : 1;
+  const img = display.image;
+  const sx = rect.width > 0 && img ? img.naturalWidth / rect.width : 1;
+  const sy = rect.height > 0 && img ? img.naturalHeight / rect.height : 1;
   return {
-    x: (e.clientX - rect.left) / sx,
-    y: (e.clientY - rect.top) / sy
+    x: (e.clientX - rect.left) * sx,
+    y: (e.clientY - rect.top) * sy
   };
 }
 
@@ -280,8 +287,12 @@ els.canvas.addEventListener("pointerdown", (e) => {
     // Handles of the already-selected annotation win over a fresh hit test —
     // they reach slightly outside the shape, and the head/tail/rotate knobs
     // of an arrow overlap its own segment.
+    // Tolerances are defined in image pixels; scale them up when the
+    // screenshot is displayed smaller so handles stay equally grabbable on
+    // screen at any zoom.
+    const tol = 1 / (display.scale || 1);
     const sel = step.annotations.find((x) => x.id === selectedAnnotationId) || null;
-    const handle = sel ? handlesAt(sel, pt) : null;
+    const handle = sel ? handlesAt(sel, pt, tol) : null;
     if (sel && handle === "rotate") {
       const x2 = sel.x2 == null ? sel.x : sel.x2;
       const y2 = sel.y2 == null ? sel.y : sel.y2;
@@ -299,7 +310,7 @@ els.canvas.addEventListener("pointerdown", (e) => {
       renderCanvas();
       return;
     }
-    const a = annotationHit(step.annotations, pt);
+    const a = annotationHit(step.annotations, pt, tol);
     selectedAnnotationId = a ? a.id : null;
     if (a) {
       drag = { kind: "move", ann: a, startX: pt.x, startY: pt.y, orig: { ...a } };
@@ -322,6 +333,12 @@ els.canvas.addEventListener("pointerdown", (e) => {
     text: ""
   };
   if (tool === "text") {
+    // preventDefault kills the browser's default mousedown handling for this
+    // gesture — which would otherwise steal focus back from the text input we
+    // are about to focus and blur it before a single character could be typed
+    // (blur fired the empty commit that instantly closed the box: the
+    // "text tool never worked" bug).
+    e.preventDefault();
     openTextInput(pt, base);
     return;
   }
@@ -417,9 +434,12 @@ els.canvas.addEventListener("pointerup", (e) => {
   const pt = canvasPoint(e);
   if (kind === "draw") {
     const a = drag.ann;
+    // Thresholds are screen px; convert to image px so a plain click on a
+    // heavily scaled-down screenshot still counts as a click.
+    const tinyPx = 4 / (display.scale || 1);
     const tiny = a.type === "arrow"
-      ? Math.hypot((a.x2 == null ? a.x : a.x2) - a.x, (a.y2 == null ? a.y : a.y2) - a.y) < 4
-      : (a.w < 3 && a.h < 3);
+      ? Math.hypot((a.x2 == null ? a.x : a.x2) - a.x, (a.y2 == null ? a.y : a.y2) - a.y) < tinyPx
+      : (a.w < tinyPx && a.h < tinyPx);
     if (tiny) {
       const step = currentStep();
       step.annotations = step.annotations.filter((x) => x.id !== a.id);
@@ -438,47 +458,66 @@ els.canvas.addEventListener("pointerup", (e) => {
     crop.y2 = pt.y;
     // An accidental click without a real drag clears the marquee instead of
     // committing a degenerate crop region.
-    if (Math.abs(crop.x2 - crop.x1) < 8 || Math.abs(crop.y2 - crop.y1) < 8) crop = null;
+    const minPx = 8 / (display.scale || 1);
+    if (Math.abs(crop.x2 - crop.x1) < minPx || Math.abs(crop.y2 - crop.y1) < minPx) crop = null;
     syncCropBar();
   }
   drag = null;
   renderCanvas();
 });
 
+// Only one text box may exist at a time; its finisher is stored here so a
+// second canvas click COMMITS the first box instead of stacking a second set
+// of keydown/blur listeners on the same input (which committed duplicates).
+let closeTextInput = null;
+
 function openTextInput(pt, ann) {
+  if (closeTextInput) closeTextInput();
   const input = els.textInput;
   input.classList.remove("hidden");
-  // Map the canvas-bitmap point through the LIVE displayed size: display.scale
-  // predates any CSS shrinking of the canvas, so the input could drift away
-  // from the click point on narrow windows.
+  // Map the natural-image point through the LIVE displayed size so the input
+  // sits exactly on the click, whatever the current zoom / CSS shrinking is.
   const rect = els.canvas.getBoundingClientRect();
-  const ratio = els.canvas.width > 0 ? rect.width / els.canvas.width : display.scale;
+  const img = display.image;
+  const ratio = rect.width > 0 && img ? rect.width / img.naturalWidth : display.scale;
   input.style.left = `${els.canvas.offsetLeft + pt.x * ratio}px`;
   input.style.top = `${els.canvas.offsetTop + pt.y * ratio}px`;
   input.value = "";
   input.focus();
-  const commit = () => {
-    const text = input.value.trim();
-    input.classList.add("hidden");
+  // Belt for engines that settle focus asynchronously.
+  setTimeout(() => { if (closeTextInput) input.focus(); }, 0);
+  const finish = (commitValue) => {
+    if (!closeTextInput) return;
+    closeTextInput = null;
     input.removeEventListener("keydown", onKey);
-    input.removeEventListener("blur", commit);
+    input.removeEventListener("blur", onBlur);
+    const text = commitValue ? input.value.trim() : "";
+    input.classList.add("hidden");
     if (text) {
+      const lines = text.split("\n");
       ann.text = text;
-      ann.w = Math.max(40, text.length * ann.fontSize * 0.62);
-      ann.h = ann.fontSize * 1.4;
+      ann.w = Math.max(40, ...lines.map((l) => l.length * ann.fontSize * 0.62));
+      ann.h = Math.max(ann.fontSize * 1.4, lines.length * ann.fontSize * 1.4);
       const step = currentStep();
-      step.annotations.push(ann);
-      snapshot();
-      markDirty();
+      if (step && !step.annotations.some((x) => x.id === ann.id)) {
+        snapshot(); // undo restores the state WITHOUT the new text
+        step.annotations.push(ann);
+        markDirty();
+      }
     }
+    // Professional editors drop back to Select after inserting text so the
+    // next drag moves the new label instead of spawning another one.
+    setTool("select");
     renderCanvas();
   };
   const onKey = (ev) => {
-    if (ev.key === "Enter") { ev.preventDefault(); commit(); }
-    if (ev.key === "Escape") { input.value = ""; commit(); }
+    if (ev.key === "Enter") { ev.preventDefault(); finish(true); }
+    else if (ev.key === "Escape") { ev.preventDefault(); input.value = ""; finish(false); }
   };
+  const onBlur = () => finish(true);
   input.addEventListener("keydown", onKey);
-  input.addEventListener("blur", commit);
+  input.addEventListener("blur", onBlur);
+  closeTextInput = () => finish(true);
 }
 
 // ----------------------------------------------------------------
@@ -511,11 +550,13 @@ async function applyCrop() {
   if (!cropMode || !crop) return;
   const step = currentStep();
   if (!step || !display.image || !step.screenshot.width) { cancelCrop(); return; }
-  const imgScale = display.imgScale;
-  const nx1 = Math.max(0, Math.round(Math.min(crop.x1, crop.x2) * imgScale));
-  const ny1 = Math.max(0, Math.round(Math.min(crop.y1, crop.y2) * imgScale));
-  const nx2 = Math.min(display.image.naturalWidth, Math.round(Math.max(crop.x1, crop.x2) * imgScale));
-  const ny2 = Math.min(display.image.naturalHeight, Math.round(Math.max(crop.y1, crop.y2) * imgScale));
+  // Crop coords are natural image pixels (the same space annotations live
+  // in), so the bitmap source rect IS the coords — no extra scaling.
+  const imgScale = display.imgScale || 1;
+  const nx1 = Math.max(0, Math.round(Math.min(crop.x1, crop.x2)));
+  const ny1 = Math.max(0, Math.round(Math.min(crop.y1, crop.y2)));
+  const nx2 = Math.min(display.image.naturalWidth, Math.round(Math.max(crop.x1, crop.x2)));
+  const ny2 = Math.min(display.image.naturalHeight, Math.round(Math.max(crop.y1, crop.y2)));
   const w = nx2 - nx1, h = ny2 - ny1;
   if (w < 10 || h < 10) { cancelCrop(); return; }
   snapshot();
@@ -526,9 +567,10 @@ async function applyCrop() {
   step.screenshot.image = c.toDataURL("image/png");
   step.screenshot.width = cssW;
   step.screenshot.height = cssH;
-  // Annotations move with the image; ones left fully outside the crop are
-  // dropped instead of lingering at negative coordinates.
-  step.annotations = cropRemap(step.annotations, Math.round(nx1 / imgScale), Math.round(ny1 / imgScale), cssW, cssH);
+  // Annotations move with the image (offset in natural pixels, matching the
+  // space they are stored in); ones left fully outside the crop are dropped
+  // instead of lingering at negative coordinates.
+  step.annotations = cropRemap(step.annotations, nx1, ny1, w, h);
   selectedAnnotationId = null;
   exitCropMode();
   markDirty();
@@ -926,7 +968,8 @@ window.addEventListener("keydown", (e) => {
     const a = step && step.annotations.find((x) => x.id === selectedAnnotationId);
     if (a) {
       e.preventDefault();
-      const d = e.shiftKey ? 10 : 1;
+      // Nudge in image pixels: one screen px is 1/fit image px.
+      const d = Math.max(1, Math.round((e.shiftKey ? 10 : 1) / (display.scale || 1)));
       const dx = e.key === "ArrowLeft" ? -d : e.key === "ArrowRight" ? d : 0;
       const dy = e.key === "ArrowUp" ? -d : e.key === "ArrowDown" ? d : 0;
       if (Date.now() - lastNudgeAt > 800) snapshot();

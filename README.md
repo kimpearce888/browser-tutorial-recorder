@@ -19,7 +19,7 @@ Everything stays on your device. No accounts, no cloud uploads, no telemetry.
 
 ## Why you'll love it
 
-**Record once, share forever.** Click Start, do your workflow, click Stop. Every meaningful interaction becomes a step with a smart, auto-generated description — Click "Submit", Type "ada@example.com" into "Email" — cropped to the element you clicked, with a click marker stamped on the image, exactly like Scribe and Tango.
+**Record once, share forever.** Click Start, do your workflow, click Stop. Every meaningful interaction becomes a step with a smart, auto-generated description — Click "Submit", Type "ada@example.com" into "Email" — showing the full current view with a click marker stamped on the image, exactly like Scribe and Tango.
 
 **Edit like a pro.** Nine annotation tools (highlight, rectangle, circle, arrow, text, blur, redaction, spotlight, numbered markers), crop, merge, split, duplicate, reorder by drag, and a 60-step undo history.
 
@@ -36,7 +36,7 @@ Everything stays on your device. No accounts, no cloud uploads, no telemetry.
 - **One-click recording** with a live toolbar badge showing the step count
 - **Action-focused event capture**: CLICK, DOUBLE_CLICK, RIGHT_CLICK, MIDDLE_CLICK, TYPE (with the typed text), SELECT, CHECKBOX, RADIO, SUBMIT, KEYBOARD, DROP, NAVIGATION, NEW_TAB — scrolling is positioning, not a step; a "Navigate to …" opener step starts every tutorial
 - **Fire-and-forget event pipeline** — user actions are never dropped waiting on a screenshot
-- **Clean, professional screenshots** — recorder UI is hidden during capture, steps are auto-cropped to the clicked element (optional, on by default), and the click marker is stamped onto the image by the service worker for a consistent look
+- **Clean, professional screenshots** — recorder UI is hidden during capture, steps keep the full current view by default (Scribe-style element close-ups are an opt-in in Settings), and the click marker is stamped onto the image by the service worker for a consistent look
 - **Multi-tab support** — follows your workflow across tabs and new windows automatically
 - **SPA navigation capture** — records `history.pushState` / `hashchange` (React, Vue, Angular)
 - **Smart double-click detection** via `event.detail` (browser-authoritative)

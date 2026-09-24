@@ -835,6 +835,9 @@ section("full-page scroll planning + cursor stamp decisions (v2.0.5 regressions)
 {
   const { normalizeSettings } = await import("./settings-store.js");
   eq(normalizeSettings({}).showCursor, true, "showCursor defaults to on");
+  eq(normalizeSettings({}).autoElementCrop, false, "auto element crop defaults OFF — steps keep the full current view");
+  eq(normalizeSettings({ autoElementCrop: true }).autoElementCrop, true, "auto element crop opt-in is kept");
+  eq(normalizeSettings({ autoElementCrop: false }).autoElementCrop, false, "auto element crop stays off when unset");
   eq(normalizeSettings({ showCursor: false }).showCursor, false, "showCursor opt-out is kept");
   eq(normalizeSettings({ showCursor: 0 }).showCursor, true, "showCursor only boolean false turns it off");
 }
@@ -1280,6 +1283,13 @@ section("v2.0.7 — annotation geometry: hit-testing, handles, rotation, crop re
   eq(handlesAt({ type: "text", x: 0, y: 0, fontSize: 18, text: "hi" }, { x: 5, y: 5 }), null, "text has no resize/rotate handles");
   eq(handlesAt({ type: "rectangle", x: 0, y: 0, w: 40, h: 40 }, { x: 40, y: 40 }), "se", "rect keeps its se resize handle");
 
+  // v2.1.1 — tolerances are zoom-aware: the editor passes 1/displayScale, so
+  // a miss at 1:1 becomes a grab when the screenshot is displayed smaller.
+  eq(annotationHit(anns, { x: 112, y: 100 }, 1), null, "12px right of the rect edge misses at 1:1");
+  eq(annotationHit(anns, { x: 112, y: 100 }, 2).id, "r1", "the same point grabs the rect at 2x tolerance (zoom-aware)");
+  eq(handlesAt(arr, { x: 115, y: 0 }, 2), "head", "handle tolerance scales with zoom too");
+  eq(handlesAt(arr, { x: 115, y: 0 }), null, "and stays strict at 1:1");
+
   // Rotation preserves the segment length and pivots around the midpoint.
   const turned = rotateAround(50, 0, 0, 0, 100, 0, 0, Math.PI / 2);
   eq(turned.x, 50, "rotated tail lands on the pivot axis (x)");
@@ -1460,7 +1470,7 @@ section("v2.1.0 — clean screenshots: element crop + marker stamped onto the im
   const contentSender = { id: "btr-test-ext", tab: { id: 1, windowId: 1 }, frameId: 0, url: "https://example.com/app" };
   const pageSender = { id: "btr-test-ext", tab: { id: 42, windowId: 3 }, frameId: 0, url: "chrome-extension://btr-test-ext/popup.html" };
 
-  await callBg({ type: "SAVE_SETTINGS", patch: { captureDelayMs: 0 } }, pageSender);
+  await callBg({ type: "SAVE_SETTINGS", patch: { captureDelayMs: 0, autoElementCrop: true } }, pageSender);
   await callBg({ type: "START_RECORDING" }, pageSender);
   for (let i = 0; i < 40; i++) {
     const ui = await callBg({ type: "GET_UI_STATE" }, pageSender);
@@ -1496,6 +1506,30 @@ section("v2.1.0 — clean screenshots: element crop + marker stamped onto the im
   assert(canvasLog.arcs >= 2, "the professional click marker is drawn onto the cropped image");
   assert(captureUiMessages[0] === "hide" && captureUiMessages[captureUiMessages.length - 1] === "show",
     `recorder UI is hidden before the grab and restored after (${captureUiMessages.join(",")})`);
+
+  // v2.1.1 — element crop is OPT-IN. The default must keep the FULL current
+  // view in every step (the v2.1.0 default of ON shipped cropped portions and
+  // read as "it is taking a portion of the page instead of the current view").
+  await callBg({ type: "SAVE_SETTINGS", patch: { autoElementCrop: false } }, pageSender);
+  canvasLog.constructed.length = 0;
+  canvasLog.drawImage.length = 0;
+  canvasLog.arcs = 0;
+  bgMessageHandlers[0](
+    { type: "REC_EVENT", event: "CLICK", url: "https://example.com/app", frameUrl: "https://example.com/app", isIframe: false, frameNonce: null, overlayActive: true, description: 'Click "Save draft"', target: { selector: "#save", tag: "button", text: "Save draft", point: { x: 300, y: 200 }, boundingBox: { x: 240, y: 180, width: 120, height: 40 } }, viewport: { width: 1280, height: 720, devicePixelRatio: 1 } },
+    contentSender,
+    () => {}
+  );
+  for (let i = 0; i < 40; i++) {
+    const ui = await callBg({ type: "GET_UI_STATE" }, pageSender);
+    if (ui && ui.uiState.session && ui.uiState.session.stepCount >= 3) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  eq(canvasLog.constructed.length, 1, "the default shot is recomposed once — only to stamp the marker");
+  const [fw, fh] = canvasLog.constructed[0];
+  assert(fw === 1280 && fh === 720, `the default step keeps the full current view (got ${fw}x${fh}, want 1280x720)`);
+  assert(canvasLog.drawImage[0][1] === 0 && canvasLog.drawImage[0][2] === 0,
+    "the full-view frame is drawn with NO crop offset");
+  assert(canvasLog.arcs >= 2, "the click marker is still stamped onto the full view");
 
   delete globalThis.fetch;
   delete globalThis.OffscreenCanvas;

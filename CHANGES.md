@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.1.1 — 2026-09-24
+
+### Fixed — steps show the full current view again; every editor tool now behaves
+
+Live-reported on v2.1.0: "why it is taking a portion of the page instead of the current view? fix that", "text tool never worked", "every tool has its own issues nothing works".
+
+- **Steps keep the full current view by default.** v2.1.0 shipped with the Scribe-style element auto-crop **on by default**, so every step screenshot arrived as a ~360×280 portion of the page — read, correctly, as "it is taking a portion of the page instead of the current view". Element cropping is now an explicit opt-in (Settings → Recording → "Crop each step to the clicked element", off by default); the marker is still stamped onto the full view, and Recapture stays full-view / full-page.
+- **One coordinate bug was breaking every editor tool at once.** `canvasPoint()` stored pointer positions in *displayed-canvas* pixels, but rendering multiplied stored coordinates by the display scale (`fit`) again — on any screenshot larger than the editing pane (fit < 1, i.e. nearly always with full-view screenshots) **every shape drew offset and shrunken from where it was created while hit-testing looked at the raw click position**. That single mismatch is what made select/move "not working", the arrow rotate handle practically ungrabbable, the crop marquee drift away from the cursor and crop the wrong region, and committed text render away from its input box. Annotations now live in one coordinate space — natural screenshot pixels — shared by drawing, hit-testing, handles, crop, nudging and exports; hit/handle tolerances scale with the zoom so grab areas stay the same size on screen at any scale.
+- **The text tool finally works.** Clicking the canvas focused the text input, then the browser's default mousedown handling **stole the focus straight back**, and the resulting blur → empty-text commit closed the box before a single character could be typed — the input flashed and vanished, forever. The opening gesture now calls `preventDefault()` (plus a focus-refit belt), so the box stays open and takes input. Also fixed while in there: clicking the canvas a second time stacked duplicate keydown/blur listeners that committed duplicate annotations; a text commit is now serialized, multi-line text sizes its box correctly, undo restores the pre-text state, and committing drops the tool back to Select like professional editors.
+- **Blur sampled the wrong region.** The blur tool fed display-scaled coordinates into the full-resolution screenshot as a source rect, so the pixelated patch showed the wrong part of the image at any zoom ≠ 1 (in the editor and in every export). Source rects are now read in image pixels; the patch lands exactly where drawn.
+- **Arrow edge case + spotlight look.** Arrows whose head sits exactly on x=0/y=0 no longer fall back to the wrong bbox corner, and the spotlight now dims with a neutral dark veil instead of tinting the whole page with the active swatch color at 90 % opacity (which read as a broken red overlay).
+
+**Tests: 271/271 pass** (new: default-settings click keeps the full 1280×720 view with no crop offset; zoom-aware hit/handle tolerance units; auto-crop normalize defaults; the crop-on path is still covered end-to-end as an explicit opt-in).
+
 ## v2.1.0 — 2026-09-24
 
 ### Changed — professional behavior rework: "check how these apps actually work"

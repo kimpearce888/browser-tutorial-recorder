@@ -20,7 +20,7 @@ function fill() {
   $("shot-quality-val").textContent = String(settings.screenshotQuality);
   $("quality-field").style.display = settings.screenshotFormat === "jpeg" ? "" : "none";
   $("show-cursor").checked = settings.showCursor !== false;
-  $("auto-element-crop").checked = settings.autoElementCrop !== false;
+  $("auto-element-crop").checked = settings.autoElementCrop === true;
   $("idle-timeout").value = String(settings.autoPauseIdleSec);
   $("excluded").value = settings.excludedDomains.join("\n");
   $("sensitive").value = settings.sensitivePatterns.join("\n");

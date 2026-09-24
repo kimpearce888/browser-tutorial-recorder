@@ -24,7 +24,10 @@ function alpha(color, opacity) {
 
 function drawArrow(ctx, a, scale) {
   const x1 = a.x * scale, y1 = a.y * scale;
-  const x2 = (a.x2 || a.x + a.w) * scale, y2 = (a.y2 || a.y + a.h) * scale;
+  // `a.x2 || …` broke arrows whose head sits exactly on x=0/y=0; only fall
+  // back to the bbox corner when x2/y2 is genuinely absent.
+  const x2 = (a.x2 == null ? a.x + (a.w || 0) : a.x2) * scale;
+  const y2 = (a.y2 == null ? a.y + (a.h || 0) : a.y2) * scale;
   const angle = Math.atan2(y2 - y1, x2 - x1);
   const head = Math.max(10, a.strokeWidth * 4) * scale;
   ctx.strokeStyle = alpha(a.color, a.opacity);
@@ -43,19 +46,27 @@ function drawArrow(ctx, a, scale) {
 }
 
 function drawBlur(ctx, image, a, scale) {
-  const pad = a.blur * scale;
-  const x = Math.max(0, a.x * scale - pad);
-  const y = Math.max(0, a.y * scale - pad);
-  const w = Math.min(ctx.canvas.width - x, a.w * scale + pad * 2);
-  const h = Math.min(ctx.canvas.height - y, a.h * scale + pad * 2);
-  if (w <= 0 || h <= 0) return;
+  if (!image) return;
+  // Annotations live in natural image pixels; the SOURCE rect must be read
+  // in that same space. The old version fed display-scaled coords into a
+  // full-resolution image, so blur sampled the wrong region whenever the
+  // image was displayed (or exported) at anything other than 1:1 — the
+  // pixelated/blurry patch showed the wrong part of the screenshot.
+  const pad = a.blur || 10;
+  const sx = Math.max(0, (a.x || 0) - pad);
+  const sy = Math.max(0, (a.y || 0) - pad);
+  const sw = Math.min(image.naturalWidth - sx, (a.x || 0) + (a.w || 0) + pad - sx);
+  const sh = Math.min(image.naturalHeight - sy, (a.y || 0) + (a.h || 0) + pad - sy);
+  if (sw <= 1 || sh <= 1) return;
+  const dw = Math.max(1, Math.round(sw * scale));
+  const dh = Math.max(1, Math.round(sh * scale));
   const temp = document.createElement("canvas");
-  temp.width = Math.max(1, Math.round(w));
-  temp.height = Math.max(1, Math.round(h));
+  temp.width = dw;
+  temp.height = dh;
   const tctx = temp.getContext("2d");
-  tctx.filter = `blur(${Math.max(2, a.blur * scale * 0.5)}px)`;
-  tctx.drawImage(image, x, y, w, h, 0, 0, temp.width, temp.height);
-  ctx.drawImage(temp, x, y);
+  tctx.filter = `blur(${Math.max(1.5, pad * scale * 0.5)}px)`;
+  tctx.drawImage(image, sx, sy, sw, sh, 0, 0, dw, dh);
+  ctx.drawImage(temp, sx * scale, sy * scale);
 }
 
 function drawSpotlight(ctx, a, scale) {
@@ -63,7 +74,9 @@ function drawSpotlight(ctx, a, scale) {
   overlay.width = ctx.canvas.width;
   overlay.height = ctx.canvas.height;
   const octx = overlay.getContext("2d");
-  octx.fillStyle = alpha(a.color, a.opacity);
+  // A spotlight dims with a neutral dark veil (like every serious tool) —
+  // tinting it with the active swatch color read as a broken red overlay.
+  octx.fillStyle = alpha("#0f121a", Math.min(0.85, 0.55 * (a.opacity == null ? 1 : a.opacity)));
   octx.fillRect(0, 0, overlay.width, overlay.height);
   octx.globalCompositeOperation = "destination-out";
   octx.beginPath();

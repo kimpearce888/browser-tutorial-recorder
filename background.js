@@ -342,7 +342,10 @@ async function finishScreenshot(dataUrl, evt, verdict, settings) {
     && evt.target && evt.target.point
     && Number.isFinite(evt.target.point.x) && Number.isFinite(evt.target.point.y)
   );
-  const wantsCrop = settings.autoElementCrop !== false
+  // Off by default: users expect the CURRENT VIEW in every step (exactly what
+  // standard recorders ship). The Scribe-style close-up is an explicit opt-in
+  // in Settings → Recording.
+  const wantsCrop = settings.autoElementCrop === true
     && Boolean(evt.target && (evt.target.boundingBox || evt.target.point));
   if (!needsMarker && !wantsCrop) {
     return {

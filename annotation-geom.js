@@ -40,20 +40,24 @@ function textBox(a) {
 // Topmost annotation under the canvas point, tested with the shape the user
 // actually sees (segment for arrows, disc for markers, box for text and
 // rects) — bounding-box-only testing made text and markers unselectable.
-export function annotationHit(annotations, pt) {
+export function annotationHit(annotations, pt, tolScale = 1) {
   if (!Array.isArray(annotations) || !pt) return null;
+  // Tolerances are image pixels; the editor passes 1/displayScale so hit
+  // areas stay the same SIZE ON SCREEN whatever the zoom is.
+  const tol = HIT_TOL * (tolScale || 1);
+  const disc = 16 * (tolScale || 1);
   for (let i = annotations.length - 1; i >= 0; i--) {
     const a = annotations[i];
     if (a.type === "arrow") {
-      if (distToSegment(pt.x, pt.y, a.x, a.y, a.x2 == null ? a.x : a.x2, a.y2 == null ? a.y : a.y2) <= HIT_TOL) return a;
+      if (distToSegment(pt.x, pt.y, a.x, a.y, a.x2 == null ? a.x : a.x2, a.y2 == null ? a.y : a.y2) <= tol) return a;
     } else if (a.type === "marker") {
-      if (Math.hypot(pt.x - a.x, pt.y - a.y) <= 16) return a;
+      if (Math.hypot(pt.x - a.x, pt.y - a.y) <= disc) return a;
     } else if (a.type === "text") {
       const { w, h } = textBox(a);
-      if (pt.x >= a.x - HIT_TOL && pt.x <= a.x + w + HIT_TOL && pt.y >= a.y - HIT_TOL && pt.y <= a.y + h + HIT_TOL) return a;
+      if (pt.x >= a.x - tol && pt.x <= a.x + w + tol && pt.y >= a.y - tol && pt.y <= a.y + h + tol) return a;
     } else {
       const w = a.w || 0, h = a.h || 0;
-      if (pt.x >= a.x - HIT_TOL && pt.x <= a.x + w + HIT_TOL && pt.y >= a.y - HIT_TOL && pt.y <= a.y + h + HIT_TOL) return a;
+      if (pt.x >= a.x - tol && pt.x <= a.x + w + tol && pt.y >= a.y - tol && pt.y <= a.y + h + tol) return a;
     }
   }
   return null;
@@ -72,21 +76,22 @@ export function rotateHandlePos(a) {
   };
 }
 
-export function handlesAt(a, pt) {
+export function handlesAt(a, pt, tolScale = 1) {
   if (!a || !pt) return null;
+  const tol = HANDLE_TOL * (tolScale || 1);
   if (a.type === "arrow") {
     const x2 = a.x2 == null ? a.x : a.x2;
     const y2 = a.y2 == null ? a.y : a.y2;
-    if (Math.hypot(pt.x - x2, pt.y - y2) <= HANDLE_TOL) return "head";
-    if (Math.hypot(pt.x - a.x, pt.y - a.y) <= HANDLE_TOL) return "tail";
+    if (Math.hypot(pt.x - x2, pt.y - y2) <= tol) return "head";
+    if (Math.hypot(pt.x - a.x, pt.y - a.y) <= tol) return "tail";
     const { hx, hy } = rotateHandlePos(a);
-    if (Math.hypot(pt.x - hx, pt.y - hy) <= HANDLE_TOL) return "rotate";
+    if (Math.hypot(pt.x - hx, pt.y - hy) <= tol) return "rotate";
     return null;
   }
   if (a.type === "text" || a.type === "marker") return null;
   if (RECT_TYPES.has(a.type)) {
     const cx = a.x + (a.w || 0), cy = a.y + (a.h || 0);
-    return Math.abs(pt.x - cx) <= HANDLE_TOL && Math.abs(pt.y - cy) <= HANDLE_TOL ? "se" : null;
+    return Math.abs(pt.x - cx) <= tol && Math.abs(pt.y - cy) <= tol ? "se" : null;
   }
   return null;
 }
