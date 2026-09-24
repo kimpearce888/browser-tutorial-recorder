@@ -152,6 +152,17 @@ export function normalizeTutorial(source) {
     const annotations = Array.isArray(s.annotations)
       ? s.annotations.map(normalizeAnnotation).filter(Boolean)
       : [];
+    // Element auto-crop metadata is passthrough-only: steps that have it keep
+    // it (key order stable for tutorialNeedsMigration equality), steps that
+    // don't are left untouched so old tutorials never flag a migration.
+    const crop = (shot.crop && typeof shot.crop === "object")
+      ? {
+          x: Math.max(0, Math.round(Number(shot.crop.x) || 0)),
+          y: Math.max(0, Math.round(Number(shot.crop.y) || 0)),
+          w: Math.max(0, Math.round(Number(shot.crop.w) || 0)),
+          h: Math.max(0, Math.round(Number(shot.crop.h) || 0))
+        }
+      : null;
     return {
       id: typeof s.id === "string" && s.id ? s.id.slice(0, 128) : makeId("step"),
       number: i + 1,
@@ -163,7 +174,8 @@ export function normalizeTutorial(source) {
         image,
         width: Number(shot.width) || 0,
         height: Number(shot.height) || 0,
-        timestamp: Number(shot.timestamp) || 0
+        timestamp: Number(shot.timestamp) || 0,
+        ...(crop ? { crop } : {})
       },
       annotations
     };

@@ -262,6 +262,7 @@ const SHOT = { image: "data:image/png;base64,SHOT", width: 1280, height: 720, dp
   rec.startRecording({ id: 1, windowId: 1 });
   const evt = rec.addSystemStep("NAVIGATION", 1, "https://example.com/target");
   assert(evt && evt.description.includes("example.com"), "system NAVIGATION described");
+  eq(rec.handleEvent(evt, { tabId: 1 }).action, "captured", "system NAVIGATION passes handleEvent (dedupe already ran in addSystemStep)");
   rec.commitStep(evt, SHOT);
   eq(rec.addSystemStep("NAVIGATION", 1, "https://example.com/target"), null, "system NAVIGATION deduped");
   const nt = rec.addSystemStep("NEW_TAB", 2, "about:blank");
@@ -402,9 +403,10 @@ import { JSDOM } from "jsdom";
   eq(hooks.buildSelector(doc.getElementById("pw")), "#pw", "buildSelector uses unique id");
   eq(hooks.fieldLabel(doc.getElementById("pw")), "password", "fieldLabel falls back to name");
   eq(hooks.fieldLabel(doc.getElementById("user")), "Username", "fieldLabel prefers aria-label");
-  eq(hooks.describe("CLICK", doc.getElementById("go")), "Click the Submit button", "describe CLICK");
-  eq(hooks.describe("TYPE", doc.getElementById("user")), "Type into the Username", "describe TYPE");
-  eq(hooks.describe("DOUBLE_CLICK", doc.getElementById("link1")), "Double-click the Read more", "describe DOUBLE_CLICK uses text");
+  eq(hooks.describe("CLICK", doc.getElementById("go")), 'Click "Submit"', "describe CLICK quotes the element (professional phrasing)");
+  eq(hooks.describe("TYPE", doc.getElementById("user")), 'Type into "Username"', "describe TYPE quotes the field");
+  eq(hooks.describe("TYPE", doc.getElementById("user"), { text: "ada@example.com" }), 'Type "ada@example.com" into "Username"', "describe TYPE includes the typed text");
+  eq(hooks.describe("DOUBLE_CLICK", doc.getElementById("link1")), 'Double-click "Read more"', "describe DOUBLE_CLICK quotes the text");
   assert(hooks.isSensitiveField(doc.getElementById("pw")) === true, "password field is sensitive");
   assert(hooks.isSensitiveField(doc.getElementById("user")) === false, "username field not sensitive");
   eq(hooks.collectSensitiveFields().length, 1, "collectSensitiveFields finds masked fields");
@@ -750,15 +752,15 @@ section("integration — blocked screenshot capture is surfaced and steps still 
     () => {}
   );
 
-  await new Promise((r) => setTimeout(r, 1300));
+  await new Promise((r) => setTimeout(r, 1500));
 
-  eq(captureAttempts, 1, "captureVisibleTab attempted once per committed event");
+  eq(captureAttempts, 2, "starting Navigate step + the click each attempt one capture");
   const uiRes = await new Promise((resolve) => {
     bgMessageHandlers[0]({ type: "GET_UI_STATE" }, { id: "btr-test-ext", tab: { id: 42, windowId: 3 }, frameId: 0, url: "chrome-extension://btr-test-ext/popup.html" }, resolve);
   });
   assert(uiRes && uiRes.ok === true && uiRes.uiState, "GET_UI_STATE responds after failed capture");
   assert(uiRes.uiState.captureBlocked === true, "captureBlocked surfaces in uiState when screenshots fail");
-  assert(uiRes.uiState.session && uiRes.uiState.session.stepCount === 1, "the step still commits without an image when capture fails");
+  assert(uiRes.uiState.session && uiRes.uiState.session.stepCount === 2, "the Navigate opener + the click both commit without images when capture fails");
 
   delete globalThis.chrome;
 }
@@ -909,6 +911,17 @@ section("v2.0.6 — captureVisibleTab quota gate (MAX_CAPTURE_VISIBLE_TAB_CALLS_
   const startRes = await callBg({ type: "START_RECORDING" }, pageSender);
   assert(startRes && startRes.ok === true, "recording starts for the quota-gate test");
 
+  // v2.1.0: START commits the professional opener step ("Navigate to …") —
+  // wait for its capture, then measure the burst in isolation.
+  for (let i = 0; i < 40; i++) {
+    const ui = await callBg({ type: "GET_UI_STATE" }, pageSender);
+    if (ui && ui.uiState.session && ui.uiState.session.stepCount >= 1) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  const openerRes = await callBg({ type: "GET_UI_STATE" }, pageSender);
+  eq(openerRes.uiState.session.stepCount, 1, "the starting Navigate step commits before any user click");
+  captureTimes.length = 0;
+
   // Three clicks in rapid succession — the old code rate-crashed here.
   for (let i = 0; i < 3; i++) {
     bgMessageHandlers[0](
@@ -921,8 +934,8 @@ section("v2.0.6 — captureVisibleTab quota gate (MAX_CAPTURE_VISIBLE_TAB_CALLS_
 
   const uiRes = await callBg({ type: "GET_UI_STATE" }, pageSender);
   assert(uiRes && uiRes.ok === true && uiRes.uiState.session, "ui state readable after burst");
-  eq(uiRes.uiState.session.stepCount, 3, "all 3 rapid clicks committed steps");
-  eq(captureTimes.length, 3, "captureVisibleTab called exactly once per step");
+  eq(uiRes.uiState.session.stepCount, 4, "opener + all 3 rapid clicks committed steps");
+  eq(captureTimes.length, 3, "captureVisibleTab called exactly once per burst step");
   assert(uiRes.uiState.captureBlocked === false, "no capture failure surfaced (gate prevented the quota throw)");
   let minGap = Infinity;
   for (let i = 1; i < captureTimes.length; i++) minGap = Math.min(minGap, captureTimes[i] - captureTimes[i - 1]);
@@ -1003,8 +1016,8 @@ section("v2.0.6 — capture gate retries a genuine quota error");
   await new Promise((r) => setTimeout(r, 2600));
 
   const uiRes = await callBg({ type: "GET_UI_STATE" }, pageSender);
-  assert(uiRes && uiRes.uiState.session && uiRes.uiState.session.stepCount === 1, "step commits even when the first capture hits the quota");
-  eq(attempts, 2, "quota error was retried once and then succeeded");
+  assert(uiRes && uiRes.uiState.session && uiRes.uiState.session.stepCount === 2, "opener + click commit even when the click's first capture hits the quota");
+  eq(attempts, 3, "opener captured once; the click's quota error was retried once and then succeeded");
   assert(uiRes.uiState.captureBlocked === false, "retried capture clears captureBlocked");
 
   delete globalThis.chrome;
@@ -1182,7 +1195,8 @@ section("v2.0.7 — click-point overlay only: no cursor follower (content.js in 
   await new Promise((r) => setTimeout(r, 50));
   const recs = sent.filter((m) => m && m.type === "REC_EVENT");
   eq(recs.length, recBefore + 1, "recorded click still emits exactly one REC_EVENT");
-  assert(recs.length && recs[recs.length - 1].overlayActive === true, "REC_EVENT reports the live ring so the SW skips a double stamp");
+  assert(recs.length && recs[recs.length - 1].overlayActive === true, "REC_EVENT reports the live ring (live feedback; the marker in the step is stamped by the SW onto the clean shot)"
+  );
 
   // The SW commits the step and echoes the step count back: the oldest ring
   // (whose screenshot was just taken) fades out instead of lingering.
@@ -1191,6 +1205,21 @@ section("v2.0.7 — click-point overlay only: no cursor follower (content.js in 
 
   const bar = doc.getElementById(hooks.ids.TOOLBAR_ID);
   eq(bar.querySelector("span:nth-of-type(2)").textContent, "7", "step count updates live from BTR_STEP_COUNT");
+
+  // v2.1.0 — the clean-screenshot handshake: the SW hides ALL recorder UI for
+  // the instant captureVisibleTab grabs the frame, then restores it. The ring
+  // never lands baked into the shot; the reader sees the marker WE draw.
+  let captureUiAck = null;
+  contentListeners[0]({ type: "BTR_CAPTURE_UI", visible: false }, {}, (res) => { captureUiAck = res; });
+  assert(captureUiAck && captureUiAck.applied === true, "BTR_CAPTURE_UI hide is acknowledged synchronously");
+  assert(hooks.captureUiHidden() === true, "capture UI state reports hidden");
+  assert(layer.style.display === "none", "click rings hidden during the capture instant");
+  assert(bar.style.display === "none", "recording toolbar hidden during the capture instant");
+  contentListeners[0]({ type: "BTR_CAPTURE_UI", visible: true }, {}, (res) => { captureUiAck = res; });
+  assert(hooks.captureUiHidden() === false, "BTR_CAPTURE_UI show restores the state");
+  assert(layer.style.display === "", "click rings restored after the capture");
+  assert(bar.style.display === "", "recording toolbar restored after the capture");
+  assert(hooks.clickRingCount() === 1, "hide/restore preserves ring state (only visibility toggles)");
   const buttons = bar.querySelectorAll("button");
   buttons[1].click(); // Stop
   buttons[0].click(); // Pause toggle
@@ -1291,6 +1320,214 @@ section("v2.0.7 — double-click reported by two DOM events commits one step");
   const second = rec.handleEvent({ event: "DOUBLE_CLICK", url: "https://example.com/x", target }, { tabId: 1 });
   eq(second.action, "ignored", "the duplicate DOUBLE_CLICK (detail>=2 click + dblclick) is ignored");
   eq(rec.uiState().session.stepCount, 1, "a double-click produces exactly one step");
+}
+
+/* ------------------------------------------------------------------ */
+
+section("v2.1.0 — element auto-crop planning (planCrop)");
+
+{
+  const { planCrop } = await import("./recorder-core.js");
+
+  // A small button gets padded, then expanded to the minimum crop size.
+  const small = planCrop({ x: 500, y: 400, width: 120, height: 40 }, null, 1280, 720);
+  assert(small && small.x === 380 && small.y === 280 && small.w === 360 && small.h === 280,
+    "small elements expand to the 360x280 minimum around their center");
+
+  // A large region just gets the 56px padding, clamped to the viewport.
+  const large = planCrop({ x: 100, y: 100, width: 800, height: 500 }, null, 1280, 720);
+  assert(large && large.x === 44 && large.y === 44 && large.w === 912 && large.h === 612,
+    "large elements get 56px padding clamped to the viewport");
+
+  // Near-viewport-size elements are not "cropped" at all.
+  eq(planCrop({ x: 0, y: 0, width: 1270, height: 700 }, null, 1280, 720), null,
+    "a near-full-viewport element skips the crop (it would be a no-op)");
+
+  // Centered point-only targets still get a useful crop.
+  const point = planCrop(null, { x: 640, y: 360 }, 1280, 720);
+  assert(point && point.x === 460 && point.y === 220 && point.w === 360 && point.h === 280,
+    "point-only targets center the minimum crop");
+
+  // Edge-clamped point keeps the visible part instead of failing.
+  const edge = planCrop(null, { x: 2, y: 2 }, 1280, 720);
+  assert(edge && edge.x === 0 && edge.y === 0 && edge.w === 182 && edge.h === 142,
+    "points near the viewport corner clamp instead of producing a degenerate crop");
+
+  eq(planCrop(null, null, 1280, 720), null, "no target info means a full-viewport step");
+  eq(planCrop({ x: 0, y: 0, width: 120, height: 40 }, { x: 10, y: 10 }, 0, 0), null, "degenerate viewport is rejected");
+}
+
+/* ------------------------------------------------------------------ */
+
+section("v2.1.0 — clean screenshots: element crop + marker stamped onto the image");
+
+{
+  const TAB1 = { id: 1, windowId: 1, url: "https://example.com/app", title: "Example App", active: true };
+  const tabsMap = new Map([[1, TAB1]]);
+  const store = { local: new Map(), session: new Map() };
+  const mkStorage = (m) => ({
+    get: async (keys) => {
+      const out = {};
+      for (const k of (Array.isArray(keys) ? keys : [keys])) if (m.has(k)) out[k] = m.get(k);
+      return out;
+    },
+    set: async (obj) => { for (const [k, v] of Object.entries(obj)) m.set(k, v); },
+    remove: async (keys) => { for (const k of (Array.isArray(keys) ? keys : [keys])) m.delete(k); }
+  });
+  const bgMessageHandlers = [];
+  const canvasLog = { constructed: [], drawImage: [], arcs: 0 };
+  const captureUiMessages = [];
+
+  // Recording canvas stack: proves the crop offset AND the marker in one pass.
+  globalThis.OffscreenCanvas = class {
+    constructor(w, h) {
+      this.width = w; this.height = h;
+      canvasLog.constructed.push([w, h]);
+    }
+    getContext() {
+      return {
+        drawImage: (...args) => canvasLog.drawImage.push(args),
+        arc: () => { canvasLog.arcs++; },
+        beginPath() {}, moveTo() {}, lineTo() {}, closePath() {},
+        fill() {}, stroke() {}, save() {}, restore() {},
+        translate() {}, scale() {},
+        set fillStyle(v) {}, set strokeStyle(v) {}, set lineWidth(v) {}, set lineJoin(v) {}
+      };
+    }
+    async convertToBlob() { return new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], { type: "image/png" }); }
+  };
+  globalThis.createImageBitmap = async () => ({ width: 1280, height: 720, close() {} });
+  if (typeof globalThis.FileReader === "undefined") {
+    globalThis.FileReader = class {
+      readAsDataURL(blob) {
+        blob.arrayBuffer().then((buf) => {
+          this.result = `data:image/png;base64,${Buffer.from(buf).toString("base64")}`;
+          if (this.onload) this.onload();
+        });
+      }
+    };
+  }
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).startsWith("data:")) {
+      const b64 = String(url).split(",")[1] || "";
+      return { blob: async () => new Blob([Buffer.from(b64, "base64")], { type: "image/png" }) };
+    }
+    return realFetch(url);
+  };
+
+  globalThis.chrome = {
+    runtime: {
+      id: "btr-test-ext",
+      getURL: (p) => `chrome-extension://btr-test-ext/${p || ""}`,
+      onMessage: { addListener: (fn) => bgMessageHandlers.push(fn) }
+    },
+    storage: {
+      local: mkStorage(store.local),
+      session: mkStorage(store.session),
+      onChanged: { addListener: () => {} }
+    },
+    action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
+    scripting: { executeScript: async () => [{ result: null }] },
+    commands: { onCommand: { addListener: () => {} } },
+    tabs: {
+      query: async (q) => (q && q.active ? [TAB1] : [...tabsMap.values()]),
+      get: async (id) => tabsMap.get(id) || null,
+      create: async (o) => ({ id: 99, ...o }),
+      update: async () => ({}),
+      remove: async () => {},
+      sendMessage: async (tabId, message) => {
+        if (message && message.type === "BTR_CAPTURE_UI") {
+          captureUiMessages.push(message.visible !== false ? "show" : "hide");
+          return { ok: true, applied: true };
+        }
+        return undefined;
+      },
+      captureVisibleTab: async () => "data:image/png;base64,MOCKSHOT",
+      onUpdated: { addListener: () => {} },
+      onActivated: { addListener: () => {} },
+      onCreated: { addListener: () => {} },
+      onRemoved: { addListener: () => {} }
+    }
+  };
+
+  await import("./background.js?clean-capture");
+
+  const callBg = (message, sender) => Promise.race([
+    new Promise((resolve) => { bgMessageHandlers[0](message, sender, resolve); }),
+    new Promise((r) => setTimeout(() => r(undefined), 800))
+  ]);
+  const contentSender = { id: "btr-test-ext", tab: { id: 1, windowId: 1 }, frameId: 0, url: "https://example.com/app" };
+  const pageSender = { id: "btr-test-ext", tab: { id: 42, windowId: 3 }, frameId: 0, url: "chrome-extension://btr-test-ext/popup.html" };
+
+  await callBg({ type: "SAVE_SETTINGS", patch: { captureDelayMs: 0 } }, pageSender);
+  await callBg({ type: "START_RECORDING" }, pageSender);
+  for (let i = 0; i < 40; i++) {
+    const ui = await callBg({ type: "GET_UI_STATE" }, pageSender);
+    if (ui && ui.uiState.session && ui.uiState.session.stepCount >= 1) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+
+  canvasLog.constructed.length = 0;
+  canvasLog.drawImage.length = 0;
+  canvasLog.arcs = 0;
+  captureUiMessages.length = 0;
+
+  // Click on a 120x40 button at (500,400) in a 1280x720 viewport.
+  bgMessageHandlers[0](
+    { type: "REC_EVENT", event: "CLICK", url: "https://example.com/app", frameUrl: "https://example.com/app", isIframe: false, frameNonce: null, overlayActive: true, description: 'Click "Buy now"', target: { selector: "#buy", tag: "button", text: "Buy now", point: { x: 560, y: 420 }, boundingBox: { x: 500, y: 400, width: 120, height: 40 } }, viewport: { width: 1280, height: 720, devicePixelRatio: 1 } },
+    contentSender,
+    () => {}
+  );
+  for (let i = 0; i < 40; i++) {
+    const ui = await callBg({ type: "GET_UI_STATE" }, pageSender);
+    if (ui && ui.uiState.session && ui.uiState.session.stepCount >= 2) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+
+  const uiRes = await callBg({ type: "GET_UI_STATE" }, pageSender);
+  eq(uiRes.uiState.session.stepCount, 2, "opener + click committed");
+  eq(canvasLog.constructed.length, 1, "the step image is recomposed exactly once");
+  const [w, h] = canvasLog.constructed[0];
+  assert(w === 360 && h === 280, `the step image is cropped to the element region (got ${w}x${h}, want 360x280)`);
+  eq(canvasLog.drawImage.length, 1, "the raw frame is drawn into the crop exactly once");
+  assert(canvasLog.drawImage[0][1] === -380 && canvasLog.drawImage[0][2] === -280,
+    "the frame is offset by the crop origin (-380,-280)");
+  assert(canvasLog.arcs >= 2, "the professional click marker is drawn onto the cropped image");
+  assert(captureUiMessages[0] === "hide" && captureUiMessages[captureUiMessages.length - 1] === "show",
+    `recorder UI is hidden before the grab and restored after (${captureUiMessages.join(",")})`);
+
+  delete globalThis.fetch;
+  delete globalThis.OffscreenCanvas;
+  delete globalThis.createImageBitmap;
+  delete globalThis.FileReader;
+  delete globalThis.chrome;
+}
+
+/* ------------------------------------------------------------------ */
+
+section("v2.1.0 — crop metadata round-trips through normalizeTutorial");
+
+{
+  const withCrop = normalizeTutorial({
+    title: "T",
+    steps: [{
+      action: "CLICK", description: "d",
+      screenshot: { image: "data:image/png;base64,AAA", width: 360, height: 280, timestamp: 1, crop: { x: 10, y: 20, w: 360, h: 280 } }
+    }]
+  });
+  assert(withCrop.steps[0].screenshot.crop && withCrop.steps[0].screenshot.crop.x === 10,
+    "crop metadata survives normalize (saved tutorials keep their crop)");
+
+  const withoutCrop = normalizeTutorial({
+    title: "T",
+    steps: [{
+      action: "CLICK", description: "d",
+      screenshot: { image: "data:image/png;base64,AAA", width: 1280, height: 720, timestamp: 1 }
+    }]
+  });
+  assert(withoutCrop.steps[0].screenshot.crop === undefined,
+    "steps without a crop stay crop-free (old tutorials unchanged)");
 }
 
 /* ------------------------------------------------------------------ */

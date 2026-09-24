@@ -8,7 +8,6 @@
   const IS_TOP = window.top === window;
   const FRAME_NONCE = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
   const MASK_CONTAINER_ID = "__btr-masks";
-  const SCROLL_IDLE_MS = 700;
   const TYPE_IDLE_MS = 900;
 
   let attached = false;
@@ -37,6 +36,18 @@
   let toolbar = null;
   let toolbarPauseBtn = null;
   let toolbarCount = null;
+  let captureUiHidden = false;
+
+  // Professional recorders never show their own UI inside the screenshots
+  // they take. The service worker calls this around every captureVisibleTab:
+  // the rings and toolbar vanish for the instant the frame is grabbed, then
+  // come back. Ring state is preserved — only visibility toggles.
+  function applyCaptureUiVisibility(show) {
+    const vis = show ? "" : "none";
+    if (cursorLayer && cursorLayer.isConnected) cursorLayer.style.display = vis;
+    if (toolbar && toolbar.isConnected) toolbar.style.display = vis;
+    captureUiHidden = !show;
+  }
 
   function cursorOverlayOn() {
     return attached && !paused && cursorEnabled;
@@ -116,7 +127,31 @@
     toolbar.id = TOOLBAR_ID;
     toolbar.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483647;display:flex;align-items:center;gap:10px;"
       + "background:rgba(21,22,26,.92);border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:8px 14px;"
-      + "font:600 13px/1 system-ui,sans-serif;color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.35);user-select:none;";
+      + "font:600 13px/1 system-ui,sans-serif;color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.35);user-select:none;cursor:grab;";
+    // Draggable like every professional recorder pill — it must never sit on
+    // top of the content the user needs to click next.
+    toolbar.addEventListener("pointerdown", (e) => {
+      if (e.target && e.target.tagName === "BUTTON") return;
+      e.preventDefault();
+      const rect = toolbar.getBoundingClientRect();
+      const startX = e.clientX, startY = e.clientY;
+      toolbar.style.right = "auto";
+      toolbar.style.bottom = "auto";
+      toolbar.style.left = `${rect.left}px`;
+      toolbar.style.top = `${rect.top}px`;
+      const onMove = (ev) => {
+        const left = Math.min(Math.max(8, rect.left + ev.clientX - startX), Math.max(8, window.innerWidth - rect.width - 8));
+        const top = Math.min(Math.max(8, rect.top + ev.clientY - startY), Math.max(8, window.innerHeight - rect.height - 8));
+        toolbar.style.left = `${left}px`;
+        toolbar.style.top = `${top}px`;
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    });
     const dot = document.createElement("span");
     dot.style.cssText = "width:10px;height:10px;border-radius:50%;background:#d93025;box-shadow:0 0 6px #d93025;";
     toolbarCount = document.createElement("span");
@@ -209,10 +244,7 @@
     const text = visibleText(el);
     const isButtonish = tag === "button" || (el.getAttribute("role") === "button") ||
       (tag === "input" && /^(submit|button)$/i.test(el.getAttribute("type") || ""));
-    if (isButtonish && text) {
-      const t = text.slice(0, 60);
-      return /button$/i.test(t) ? t : `${t} button`;
-    }
+    if (isButtonish && text) return text.slice(0, 60);
     if (text && tag !== "input" && tag !== "select" && tag !== "textarea") return text.slice(0, 60);
     const placeholder = el.getAttribute("placeholder");
     if (placeholder && placeholder.trim()) return placeholder.trim().slice(0, 60);
@@ -241,22 +273,28 @@
     return direct || (el.textContent || "").trim();
   }
 
+  // Professional guides quote the element the user interacts with —
+  // Scribe/Tango write Click "Sign in", never "Click the Sign in".
+  function q(s) {
+    return `"${String(s == null ? "" : s).replace(/"/g, "'").slice(0, 60)}"`;
+  }
+
   function describe(action, el, extra) {
     const label = fieldLabel(el);
     switch (action) {
-      case "CLICK": return `Click the ${label}`;
-      case "DOUBLE_CLICK": return `Double-click the ${label}`;
-      case "RIGHT_CLICK": return `Right-click the ${label}`;
-      case "MIDDLE_CLICK": return `Middle-click the ${label}`;
-      case "TYPE": return `Type into the ${label}`;
-      case "SELECT": return extra && extra.option ? `Select "${extra.option}" in the ${label}` : `Change the ${label} dropdown`;
-      case "CHECKBOX": return el.checked ? `Check the ${label}` : `Uncheck the ${label}`;
-      case "RADIO": return `Select the ${label} option`;
-      case "SUBMIT": return `Submit the form (${label})`;
+      case "CLICK": return `Click ${q(label)}`;
+      case "DOUBLE_CLICK": return `Double-click ${q(label)}`;
+      case "RIGHT_CLICK": return `Right-click ${q(label)}`;
+      case "MIDDLE_CLICK": return `Middle-click ${q(label)}`;
+      case "TYPE": return extra && extra.text ? `Type ${q(extra.text)} into ${q(label)}` : `Type into ${q(label)}`;
+      case "SELECT": return extra && extra.option ? `Select ${q(extra.option)} in ${q(label)}` : `Change ${q(label)}`;
+      case "CHECKBOX": return el.checked ? `Check ${q(label)}` : `Uncheck ${q(label)}`;
+      case "RADIO": return `Select the ${q(label)} option`;
+      case "SUBMIT": return `Submit ${q(label)}`;
       case "KEYBOARD": return extra && extra.key ? `Press ${extra.key}` : "Press a key";
       case "SCROLL": return "Scroll the page";
-      case "DROP": return `Drop content onto the ${label}`;
-      default: return `Interact with the ${label}`;
+      case "DROP": return `Drop content onto ${q(label)}`;
+      default: return `Interact with ${q(label)}`;
     }
   }
 
@@ -499,11 +537,17 @@
   }
 
   const ACTIONABLE = "a,button,input,select,textarea,label,summary,[role='button'],[role='link'],[role='option'],[role='tab'],[role='menuitem'],[onclick],[contenteditable]:not([contenteditable='false'])";
+  // Professional recorders capture every click on real content — modern SPA
+  // apps delegate handlers from plain <div>/<span> nodes, which the old
+  // ACTIONABLE-only match silently dropped. Bare container whitespace (clicks
+  // that land on body/html or an empty wrapper) is still ignored.
+  const CLICKABLE_FALLBACK = "h1,h2,h3,h4,h5,h6,p,span,li,td,th,img,label,strong,em,b,i,svg,[role]";
 
   document.addEventListener("click", (event) => {
     if (inBtrUi(event.target)) return;
-    const el = event.target instanceof Element ? event.target.closest(ACTIONABLE) : null;
-    if (!el) return;
+    if (!(event.target instanceof Element)) return;
+    const el = event.target.closest(ACTIONABLE) || event.target.closest(CLICKABLE_FALLBACK);
+    if (!el || el === document.body || el === document.documentElement) return;
     const tag = el.tagName;
     if (tag === "INPUT" && /^(checkbox|radio)$/i.test(el.getAttribute("type") || "")) return;
     if (tag === "SELECT" || tag === "OPTION") return;
@@ -554,7 +598,13 @@
     const editable = tag === "TEXTAREA" || (tag === "INPUT" && !/^(checkbox|radio|button|submit|file|range|color)$/i.test(el.getAttribute("type") || "")) || el.isContentEditable;
     if (!editable) return;
     clearTimeout(typeTimers.get(el));
-    typeTimers.set(el, setTimeout(() => sendEvent("TYPE", el, event), TYPE_IDLE_MS));
+    typeTimers.set(el, setTimeout(() => {
+      // Capture what was actually typed — professional guides write
+      // Type "hello@site.com" into "Email". Sensitive fields are masked.
+      const raw = el.isContentEditable ? (el.textContent || "") : (el.value || "");
+      const text = isSensitiveField(el) ? "••••••" : raw.trim().slice(0, 120);
+      sendEvent("TYPE", el, event, { text });
+    }, TYPE_IDLE_MS));
   }, true);
 
   document.addEventListener("submit", (event) => {
@@ -578,17 +628,13 @@
     sendEvent("KEYBOARD", el, event, { key: label });
   }, true);
 
-  let scrollTimer = null;
+  // Scrolling is positioning, not an action — Scribe/Tango never commit a
+  // step for it (the next click's screenshot naturally shows the scrolled
+  // state), and neither do we anymore. It also killed the "4. Scroll the
+  // page" noise steps.
   function onScroll() {
     positionClickRings();
-    if (!attached || paused) return;
-    clearTimeout(scrollTimer);
-    scrollTimer = setTimeout(() => {
-      sendEvent("SCROLL", document.documentElement, null, {
-        description: "Scroll the page",
-        target: { selector: "html", tag: "html", scrollY: Math.round(window.scrollY), scrollX: Math.round(window.scrollX) }
-      });
-    }, SCROLL_IDLE_MS);
+    if (!attached) return;
     scheduleMaskWork();
   }
   window.addEventListener("scroll", onScroll, { passive: true });
@@ -641,8 +687,13 @@
     }
   });
 
-  chrome.runtime.onMessage.addListener((message) => {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || typeof message.type !== "string") return undefined;
+    if (message.type === "BTR_CAPTURE_UI") {
+      applyCaptureUiVisibility(message.visible !== false);
+      sendResponse({ ok: true, applied: true });
+      return undefined;
+    }
     if (message.type === "ATTACH_RECORDER") {
       attached = Boolean(message.recording);
       paused = Boolean(message.paused);
@@ -689,6 +740,8 @@
     collectSensitiveFields, cumulativeOffset, viewport,
     getState: () => ({ attached, paused, sensitivePatterns, excludedDomains, cursorEnabled }),
     cursorOverlayOn, spawnClickRing, ensureCursorLayer, ensureToolbar, inBtrUi,
+    applyCaptureUiVisibility,
+    captureUiHidden: () => captureUiHidden,
     clickRingCount: () => clickRings.size,
     ids: { CURSOR_LAYER_ID, TOOLBAR_ID }
   };

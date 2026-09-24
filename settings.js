@@ -20,6 +20,7 @@ function fill() {
   $("shot-quality-val").textContent = String(settings.screenshotQuality);
   $("quality-field").style.display = settings.screenshotFormat === "jpeg" ? "" : "none";
   $("show-cursor").checked = settings.showCursor !== false;
+  $("auto-element-crop").checked = settings.autoElementCrop !== false;
   $("idle-timeout").value = String(settings.autoPauseIdleSec);
   $("excluded").value = settings.excludedDomains.join("\n");
   $("sensitive").value = settings.sensitivePatterns.join("\n");
@@ -85,6 +86,7 @@ $("shot-format").addEventListener("change", (e) => patch({ screenshotFormat: e.t
 $("shot-quality").addEventListener("change", (e) => patch({ screenshotQuality: Number(e.target.value) }));
 $("shot-quality").addEventListener("input", (e) => { $("shot-quality-val").textContent = e.target.value; });
 $("show-cursor").addEventListener("change", (e) => patch({ showCursor: e.target.checked }));
+$("auto-element-crop").addEventListener("change", (e) => patch({ autoElementCrop: e.target.checked }));
 $("idle-timeout").addEventListener("change", (e) => patch({ autoPauseIdleSec: Math.max(0, Math.min(600, Number(e.target.value) || 0)) }));
 $("excluded").addEventListener("change", (e) => {
   const domains = e.target.value.split(/\n+/).map((d) => d.trim().toLowerCase()).filter(Boolean);

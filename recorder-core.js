@@ -48,6 +48,47 @@ export function sameTarget(a, b) {
   return false;
 }
 
+// Element auto-crop — the Scribe/Tango signature. Each action step is zoomed
+// to the region the user actually interacted with instead of shipping a full
+// viewport nobody asked for. Pure so it can be unit-tested.
+export const CROP_PAD = 56;
+export const CROP_MIN_W = 360;
+export const CROP_MIN_H = 280;
+
+export function planCrop(bbox, point, cssW, cssH) {
+  if (!(cssW > 0) || !(cssH > 0)) return null;
+  if (point && !(Number.isFinite(point.x) && Number.isFinite(point.y))) point = null;
+  if (bbox && !(Number.isFinite(bbox.x) && Number.isFinite(bbox.y) && bbox.width > 0 && bbox.height > 0)) bbox = null;
+  if (!bbox && !point) return null;
+  let x1, y1, x2, y2;
+  if (bbox) {
+    x1 = bbox.x - CROP_PAD;
+    y1 = bbox.y - CROP_PAD;
+    x2 = bbox.x + bbox.width + CROP_PAD;
+    y2 = bbox.y + bbox.height + CROP_PAD;
+  } else {
+    x1 = point.x - CROP_MIN_W / 2;
+    y1 = point.y - CROP_MIN_H / 2;
+    x2 = point.x + CROP_MIN_W / 2;
+    y2 = point.y + CROP_MIN_H / 2;
+  }
+  if (x2 - x1 < CROP_MIN_W) {
+    const cx = (x1 + x2) / 2;
+    x1 = cx - CROP_MIN_W / 2; x2 = cx + CROP_MIN_W / 2;
+  }
+  if (y2 - y1 < CROP_MIN_H) {
+    const cy = (y1 + y2) / 2;
+    y1 = cy - CROP_MIN_H / 2; y2 = cy + CROP_MIN_H / 2;
+  }
+  x1 = Math.max(0, x1); y1 = Math.max(0, y1);
+  x2 = Math.min(cssW, x2); y2 = Math.min(cssH, y2);
+  const w = x2 - x1, h = y2 - y1;
+  if (w < 40 || h < 40) return null;
+  // A "crop" covering ~the whole viewport is not a crop.
+  if (w >= cssW * 0.94 && h >= cssH * 0.94) return null;
+  return { x: Math.round(x1), y: Math.round(y1), w: Math.round(w), h: Math.round(h) };
+}
+
 export function createRecorder(deps = {}) {
   const now = deps.now || (() => Date.now());
   const newId = deps.newId || ((p) => makeId(p));
@@ -135,7 +176,8 @@ export function createRecorder(deps = {}) {
       image: screenshot.image || "",
       width: screenshot.width || 0,
       height: screenshot.height || 0,
-      timestamp: now()
+      timestamp: now(),
+      ...(screenshot.crop ? { crop: { ...screenshot.crop } } : {})
     } : { image: "", width: 0, height: 0, timestamp: now(), status: "FAILED" };
     step.annotations = [];
     state.steps.push(step);
@@ -165,7 +207,7 @@ export function createRecorder(deps = {}) {
 
     const event = evt.event;
 
-    if (event === "NAVIGATION") {
+    if (event === "NAVIGATION" && !evt.system) {
       const prev = state.lastNavUrlByTab.get(tabId) || "";
       if (prev === url) return { action: "ignored", reason: "nav-duplicate" };
       state.lastNavUrlByTab.set(tabId, url);
@@ -221,8 +263,12 @@ export function createRecorder(deps = {}) {
       if (prev === url) return null;
       state.lastNavUrlByTab.set(tabId, url);
     }
+    // system: true — the dedupe already ran here, so handleEvent must not
+    // re-check the map and silently drop the event (this exact double-dedupe
+    // used to kill every page-load navigation step).
     const evt = {
       event,
+      system: true,
       url,
       description: event === "NAVIGATION" ? `Navigate to ${describeUrl(url)}`
         : event === "NEW_TAB" ? "Open a new tab"

@@ -3,16 +3,12 @@ import {
   normalizeTutorial, toSummary
 } from "./shared.js";
 import { getSettings, saveSettings } from "./settings-store.js";
-import { createRecorder, isInternalUrl, nextScrollY } from "./recorder-core.js";
+import { createRecorder, isInternalUrl, nextScrollY, planCrop } from "./recorder-core.js";
 
 const DRAFT_ID = "draft-current";
 const UI_KEY = "btr-ui-state";
 const MIN_CAPTURE_GAP_MS = 560;
 const QUEUE_LIMIT = 14;
-// The live click ring in the page fades 2600ms after the click; a capture
-// that happens later than that cannot contain it, so the SW must stamp the
-// cursor itself. Everything faster keeps the live (perfectly positioned) ring.
-const OVERLAY_VISIBLE_MS = 2600;
 const MAX_CANVAS_HEIGHT = 24000;
 const MAX_CANVAS_WIDTH = 3840;
 
@@ -126,25 +122,52 @@ async function sendToTab(tabId, message, options) {
 // chrome.tabs.captureVisibleTab is hard-limited by Chrome to ~2 calls per
 // second (MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND). Every capture in the
 // extension MUST go through this gate: it enforces a global minimum gap
-// between calls and retries once on a genuine quota error instead of
-// failing the whole step / full-page stitch.
-async function captureVisible(windowId, options) {
-  for (let attempt = 0; ; attempt++) {
-    const waitMs = lastCaptureAt + MIN_CAPTURE_GAP_MS - Date.now();
-    if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
-    try {
-      const dataUrl = await chrome.tabs.captureVisibleTab(windowId, options);
-      lastCaptureAt = Date.now();
-      return dataUrl;
-    } catch (e) {
-      lastCaptureAt = Date.now();
-      const msg = String((e && e.message) || e);
-      if (attempt < 4 && /MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND|quota/i.test(msg)) {
-        await new Promise((r) => setTimeout(r, 700 + attempt * 350));
-        continue;
-      }
-      throw e;
+// between calls and retries on a genuine quota error instead of failing the
+// whole step / full-page stitch.
+//
+// Professional recorders never show their own UI inside screenshots. When a
+// tabId is provided, the recorder toolbar and click rings are hidden for the
+// instant the frame is grabbed (BTR_CAPTURE_UI handshake) and restored right
+// after — the marker the reader sees is the one WE draw, always consistent.
+async function setTabCaptureUi(tabId, visible) {
+  if (typeof tabId !== "number") return false;
+  try {
+    const res = await Promise.race([
+      chrome.tabs.sendMessage(tabId, { type: "BTR_CAPTURE_UI", visible }),
+      new Promise((r) => setTimeout(() => r(null), 220))
+    ]);
+    return Boolean(res && res.applied);
+  } catch { return false; }
+}
+
+async function captureVisible(windowId, options, tabId) {
+  let hidden = false;
+  try {
+    if (typeof tabId === "number") {
+      hidden = await setTabCaptureUi(tabId, false);
+      // Give the compositor a frame to actually paint the hidden UI before
+      // the frame is grabbed, otherwise the capture can race the style change.
+      await new Promise((r) => setTimeout(r, hidden ? 60 : 0));
     }
+    for (let attempt = 0; ; attempt++) {
+      const waitMs = lastCaptureAt + MIN_CAPTURE_GAP_MS - Date.now();
+      if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+      try {
+        const dataUrl = await chrome.tabs.captureVisibleTab(windowId, options);
+        lastCaptureAt = Date.now();
+        return dataUrl;
+      } catch (e) {
+        lastCaptureAt = Date.now();
+        const msg = String((e && e.message) || e);
+        if (attempt < 4 && /MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND|quota/i.test(msg)) {
+          await new Promise((r) => setTimeout(r, 700 + attempt * 350));
+          continue;
+        }
+        throw e;
+      }
+    }
+  } finally {
+    if (hidden) await setTabCaptureUi(tabId, true);
   }
 }
 
@@ -189,6 +212,11 @@ async function startRecording() {
     await injectContentScript(tab.id);
     await attachToTab(tab.id);
     recorder.addTab(tab);
+    // Professional guides open with the starting page as step 1 — Scribe and
+    // Tango both do this. Capture a "Navigate to …" step immediately so the
+    // tutorial never begins with the user's first click.
+    const first = recorder.addSystemStep("NAVIGATION", tab.id, tab.url);
+    if (first) enqueueEvent(first, { tabId: tab.id, windowId: tab.windowId, frameId: 0 });
   }
   armIdleTimer();
   await broadcastUi();
@@ -253,7 +281,8 @@ function enqueueEvent(evt, senderInfo) {
     } catch (e) {
       console.error("[BTR] event processing failed:", e);
     }
-    await new Promise((r) => setTimeout(r, MIN_CAPTURE_GAP_MS));
+    // No trailing sleep: captureVisible() already paces ALL captures
+    // globally, so an extra 560ms here just made every step feel sluggish.
   }).catch(() => {});
 }
 
@@ -293,16 +322,68 @@ function drawCursorArtifact(ctx, point, scale) {
   ctx.restore();
 }
 
-async function stampCursor(dataUrl, point, dpr) {
-  const bitmap = await createImageBitmapFromUrl(dataUrl);
-  const scale = Number(dpr) > 0 ? Number(dpr) : 1;
-  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-  const ctx = canvas.getContext("2d");
-  ctx.drawImage(bitmap, 0, 0);
-  drawCursorArtifact(ctx, point, scale);
-  bitmap.close ? bitmap.close() : null;
-  const blob = await canvas.convertToBlob({ type: "image/png" });
-  return blobToDataUrl(blob);
+// Live progress for full-page captures — GoFullPage-style "Capturing 3/8"
+// instead of a silent freeze. Best-effort: nobody may be listening.
+function reportFullPageProgress(tabId, done, pageTotal, cssHeight, maxShots) {
+  try {
+    const total = Math.max(done, Math.min(maxShots, Math.ceil((pageTotal || 0) / Math.max(1, cssHeight))));
+    const p = chrome.runtime.sendMessage({ type: "BTR_CAPTURE_PROGRESS", done, total });
+    if (p && typeof p.catch === "function") p.catch(() => {});
+  } catch { /* no listeners */ }
+}
+
+// One decode, one encode: crop the shot to the clicked element (the Scribe /
+// Tango signature) and draw the professional click marker onto the CLEAN
+// image — the DOM ring is hidden during the capture, so the marker in the
+// step is always ours: same style, same size, exactly on the click point.
+async function finishScreenshot(dataUrl, evt, verdict, settings) {
+  const needsMarker = Boolean(
+    verdict.needsCursor && settings.showCursor !== false
+    && evt.target && evt.target.point
+    && Number.isFinite(evt.target.point.x) && Number.isFinite(evt.target.point.y)
+  );
+  const wantsCrop = settings.autoElementCrop !== false
+    && Boolean(evt.target && (evt.target.boundingBox || evt.target.point));
+  if (!needsMarker && !wantsCrop) {
+    return {
+      image: dataUrl,
+      width: (evt.viewport && evt.viewport.width) || 0,
+      height: (evt.viewport && evt.viewport.height) || 0,
+      dpr: (evt.viewport && evt.viewport.devicePixelRatio) || 1
+    };
+  }
+  try {
+    const bitmap = await createImageBitmapFromUrl(dataUrl);
+    const scale = Number(evt.viewport && evt.viewport.devicePixelRatio) > 0 ? Number(evt.viewport.devicePixelRatio) : 1;
+    const cssW = bitmap.width / scale, cssH = bitmap.height / scale;
+    const crop = wantsCrop
+      ? planCrop(evt.target.boundingBox || null, evt.target.point || null, cssW, cssH)
+      : null;
+    const cw = crop ? crop.w : cssW, ch = crop ? crop.h : cssH;
+    const canvas = new OffscreenCanvas(Math.max(1, Math.round(cw * scale)), Math.max(1, Math.round(ch * scale)));
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(bitmap, crop ? -Math.round(crop.x * scale) : 0, crop ? -Math.round(crop.y * scale) : 0);
+    if (needsMarker) {
+      drawCursorArtifact(ctx, {
+        x: evt.target.point.x - (crop ? crop.x : 0),
+        y: evt.target.point.y - (crop ? crop.y : 0)
+      }, scale);
+    }
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    const out = { image: await blobToDataUrl(blob), width: Math.round(cw), height: Math.round(ch), dpr: scale };
+    if (crop) out.crop = crop;
+    return out;
+  } catch (e) {
+    // A failed crop/stamp must never cost the step its screenshot — degrade
+    // to the raw, uncropped frame instead.
+    console.warn("[BTR] crop/stamp failed (kept plain shot):", String(e && e.message || e));
+    return {
+      image: dataUrl,
+      width: (evt.viewport && evt.viewport.width) || 0,
+      height: (evt.viewport && evt.viewport.height) || 0,
+      dpr: (evt.viewport && evt.viewport.devicePixelRatio) || 1
+    };
+  }
 }
 
 async function processEvent(evt, senderInfo) {
@@ -327,13 +408,8 @@ async function processEvent(evt, senderInfo) {
       const dataUrl = await captureVisible(tab.windowId, {
         format: settings.screenshotFormat === "jpeg" ? "jpeg" : "png",
         quality: settings.screenshotQuality
-      });
-      screenshot = {
-        image: dataUrl,
-        width: (evt.viewport && evt.viewport.width) || 0,
-        height: (evt.viewport && evt.viewport.height) || 0,
-        dpr: (evt.viewport && evt.viewport.devicePixelRatio) || 1
-      };
+      }, tab.id);
+      screenshot = await finishScreenshot(dataUrl, evt, verdict, settings);
       captureBlocked = false;
     }
   } catch (e) {
@@ -341,26 +417,6 @@ async function processEvent(evt, senderInfo) {
     screenshot = null;
     captureBlocked = true;
     await broadcastUi();
-  }
-
-  // Cursor marker decision, made in exactly one place:
-  //  - overlayActive true  -> the page still shows the live click ring at the
-  //    exact click point (rings outlive the rate-limited capture), so stamping
-  //    would double-draw and risk a stale position. Skip.
-  //  - otherwise (no ring existed, or the capture was delayed past the ring's
-  //    2600ms hold and the ring has faded) -> stamp the cursor at the recorded
-  //    point so click steps never end up without a marker.
-  const elapsed = Date.now() - (evt.receivedAt || Date.now());
-  const overlayLikelyGone = !evt.overlayActive || elapsed > OVERLAY_VISIBLE_MS;
-  if (screenshot && verdict.needsCursor && settings.showCursor !== false && overlayLikelyGone) {
-    const point = evt.target && evt.target.point;
-    if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
-      try {
-        screenshot.image = await stampCursor(screenshot.image, point, screenshot.dpr);
-      } catch (e) {
-        console.warn("[BTR] cursor stamp failed (kept plain shot):", String(e && e.message || e));
-      }
-    }
   }
 
   const committed = recorder.commitStep(evt, screenshot);
@@ -501,8 +557,9 @@ async function captureFullPage(tabId, onShotsDone) {
       if (shot > 0 && pos.y <= lastActualY) break;
       lastActualY = pos.y;
       pageTotal = Math.max(pageTotal, pos.total);
-      const dataUrl = await captureVisible(windowId, { format: "png" });
+      const dataUrl = await captureVisible(windowId, { format: "png" }, tabId);
       captures.push({ dataUrl, y: pos.y });
+      reportFullPageProgress(tabId, captures.length, pageTotal, cssHeight, maxShots);
       const next = nextScrollY(pos, requested);
       if (next == null) break;
       requested = next;
@@ -666,7 +723,7 @@ async function handlePageMessage(message) {
             const dataUrl = await captureVisible(tab.windowId, {
               format: settings.screenshotFormat === "jpeg" ? "jpeg" : "png",
               quality: settings.screenshotQuality
-            });
+            }, tab.id);
             const [{ result: vp }] = await chrome.scripting.executeScript({
               target: { tabId: tab.id },
               func: () => ({ w: document.documentElement.clientWidth, h: document.documentElement.clientHeight, dpr: window.devicePixelRatio || 1 })

@@ -46,6 +46,7 @@ let cropMode = false;
 let crop = null;
 let clipboardAnnotation = null;
 let imgCache = { key: "", image: null };
+let lastNudgeAt = 0;
 
 const params = new URLSearchParams(location.search);
 const tutorialId = params.get("id");
@@ -104,6 +105,18 @@ async function save() {
 }
 
 function currentStep() { return tutorial.steps[current] || null; }
+
+// Single source of truth for switching tools: keeps the toolbar's active
+// state, the canvas cursor class and crop mode in sync (the old inline
+// tool-bar handler drifted from the crop button and the keyboard paths).
+function setTool(name) {
+  tool = name;
+  cropMode = false;
+  crop = null;
+  document.querySelectorAll(".tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === name));
+  els.canvas.classList.toggle("selecting", name !== "select");
+  syncCropBar();
+}
 
 async function renderCanvas() {
   const step = currentStep();
@@ -220,6 +233,20 @@ function drawCropOverlay(ctx, fit) {
   ctx.strokeStyle = "#ffffff";
   ctx.lineWidth = 1.5;
   ctx.strokeRect(x1, y1, w, h);
+  // Rule-of-thirds guide lines, like every serious crop tool.
+  ctx.setLineDash([]);
+  ctx.strokeStyle = "rgba(255,255,255,0.4)";
+  ctx.lineWidth = 1;
+  for (let i = 1; i <= 2; i++) {
+    ctx.beginPath();
+    ctx.moveTo(x1 + (w * i) / 3, y1);
+    ctx.lineTo(x1 + (w * i) / 3, y1 + h);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x1, y1 + (h * i) / 3);
+    ctx.lineTo(x1 + w, y1 + (h * i) / 3);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
@@ -261,15 +288,14 @@ els.canvas.addEventListener("pointerdown", (e) => {
       const cx = (sel.x + x2) / 2, cy = (sel.y + y2) / 2;
       drag = {
         kind: "rotate", ann: sel, orig: { ...sel }, cx, cy,
-        startAngle: Math.atan2(pt.y - cy, pt.x - cx)
+        startAngle: Math.atan2(pt.y - cy, pt.x - cx),
+        startX: pt.x, startY: pt.y
       };
-      snapshot();
       renderCanvas();
       return;
     }
     if (sel && handle) {
-      drag = { kind: "resize", handle, ann: sel, orig: { ...sel } };
-      snapshot();
+      drag = { kind: "resize", handle, ann: sel, orig: { ...sel }, startX: pt.x, startY: pt.y };
       renderCanvas();
       return;
     }
@@ -277,7 +303,6 @@ els.canvas.addEventListener("pointerdown", (e) => {
     selectedAnnotationId = a ? a.id : null;
     if (a) {
       drag = { kind: "move", ann: a, startX: pt.x, startY: pt.y, orig: { ...a } };
-      snapshot();
     }
     renderCanvas();
     return;
@@ -320,6 +345,14 @@ els.canvas.addEventListener("pointerdown", (e) => {
 els.canvas.addEventListener("pointermove", (e) => {
   if (!drag) return;
   const pt = canvasPoint(e);
+  // Undo snapshots are taken on the FIRST real movement, not on pointerdown:
+  // clicking an annotation without dragging must not push a no-op undo state.
+  if ((drag.kind === "move" || drag.kind === "resize" || drag.kind === "rotate") && !drag.snapped) {
+    if (Math.hypot(pt.x - drag.startX, pt.y - drag.startY) > 2) {
+      snapshot();
+      drag.snapped = true;
+    }
+  }
   if (drag.kind === "draw") {
     const a = drag.ann;
     if (a.type === "arrow") {
@@ -392,6 +425,10 @@ els.canvas.addEventListener("pointerup", (e) => {
       step.annotations = step.annotations.filter((x) => x.id !== a.id);
       if (selectedAnnotationId === a.id) selectedAnnotationId = null;
       undoStack.pop();
+    } else {
+      // Professional editors snap back to Select after every draw so the
+      // next drag moves the shape instead of spawning an accidental twin.
+      setTool("select");
     }
     markDirty();
   } else if (kind === "move" || kind === "resize" || kind === "rotate") {
@@ -585,7 +622,7 @@ function renderProps() {
   els.propUrl.value = step.url || "";
   const shot = step.screenshot || {};
   els.shotInfo.textContent = shot.image
-    ? `${shot.width || "?"} × ${shot.height || "?"} css px · ${(shot.image.length / 1024).toFixed(0)} KB`
+    ? `${shot.width || "?"} × ${shot.height || "?"} css px · ${(shot.image.length / 1024).toFixed(0)} KB${shot.crop ? " · cropped to action" : ""}`
     : "No screenshot";
 }
 
@@ -652,12 +689,7 @@ els.title.addEventListener("input", () => {
 
 document.querySelectorAll(".tool").forEach((btn) => {
   btn.addEventListener("click", () => {
-    tool = btn.dataset.tool;
-    cropMode = false;
-    crop = null;
-    document.querySelectorAll(".tool").forEach((b) => b.classList.toggle("active", b === btn));
-    els.canvas.classList.toggle("selecting", tool !== "select");
-    syncCropBar();
+    setTool(btn.dataset.tool);
     renderCanvas();
   });
 });
@@ -834,6 +866,9 @@ async function recapture(mode) {
     step.screenshot.image = res.screenshot.image;
     step.screenshot.width = res.screenshot.width;
     step.screenshot.height = res.screenshot.height;
+    // The fresh shot covers the full viewport / full page — a stored element
+    // crop from record time no longer matches it.
+    delete step.screenshot.crop;
     markDirty();
     await save();
     renderAll();
@@ -878,6 +913,32 @@ exportMenu.addEventListener("click", async (e) => {
 window.addEventListener("keydown", (e) => {
   const target = e.target;
   const typing = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+  // Crop mode keys win over everything (the shortcut loop would otherwise
+  // eat Escape for the deselect action and the crop could never be cancelled).
+  if (!typing && cropMode) {
+    if (e.key === "Enter") { e.preventDefault(); applyCrop(); return; }
+    if (e.key === "Escape") { e.preventDefault(); cancelCrop(); return; }
+  }
+  // Arrow keys nudge the selected annotation — table stakes for annotation
+  // editors. One undo entry per burst, not per keypress.
+  if (!typing && !cropMode && selectedAnnotationId && /^Arrow/.test(e.key)) {
+    const step = currentStep();
+    const a = step && step.annotations.find((x) => x.id === selectedAnnotationId);
+    if (a) {
+      e.preventDefault();
+      const d = e.shiftKey ? 10 : 1;
+      const dx = e.key === "ArrowLeft" ? -d : e.key === "ArrowRight" ? d : 0;
+      const dy = e.key === "ArrowUp" ? -d : e.key === "ArrowDown" ? d : 0;
+      if (Date.now() - lastNudgeAt > 800) snapshot();
+      lastNudgeAt = Date.now();
+      a.x += dx; a.y += dy;
+      if (a.x2 != null) { a.x2 += dx; a.y2 += dy; }
+      syncGeom(a);
+      markDirty();
+      renderCanvas();
+      return;
+    }
+  }
   const combo = normalizeCombo([
     e.ctrlKey || e.metaKey ? "Ctrl" : "",
     e.altKey ? "Alt" : "",
@@ -899,18 +960,17 @@ window.addEventListener("keydown", (e) => {
     else if (action === "addStep") document.getElementById("btn-add-step").click();
     else if (action === "nextStep") selectStep(current + 1);
     else if (action === "prevStep") selectStep(current - 1);
-    else if (action === "deselect") { selectedAnnotationId = null; renderCanvas(); }
+    else if (action === "deselect") {
+      selectedAnnotationId = null;
+      setTool("select");
+      renderCanvas();
+    }
     else if (action === "export") exportMenu.classList.toggle("hidden");
     else if (action === "dashboard") location.href = "dashboard.html";
     else if (action === "copyAnnotation") copySelectedAnnotation();
     else if (action === "pasteAnnotation") pasteAnnotation();
     else if (action === "preview") document.getElementById("btn-preview").click();
     else if (action === "shortcuts") alert(shortcutsHelpText());
-    return;
-  }
-  if (!typing && cropMode) {
-    if (e.key === "Enter") { e.preventDefault(); applyCrop(); }
-    else if (e.key === "Escape") { e.preventDefault(); cancelCrop(); }
     return;
   }
   if (!typing && e.key === "Delete" && selectedAnnotationId) deleteSelectedAnnotation();
@@ -927,6 +987,17 @@ window.addEventListener("keydown", (e) => {
 });
 
 window.addEventListener("resize", () => renderCanvas().catch(() => {}));
+
+// Live full-page capture progress from the service worker — "Capturing 3/8…"
+// instead of a silent "Recapturing…" that could sit there for half a minute.
+try {
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message && message.type === "BTR_CAPTURE_PROGRESS" && els.saveState) {
+      els.saveState.textContent = `Capturing ${message.done}/${message.total}…`;
+    }
+    return undefined;
+  });
+} catch { /* extension context unavailable (tests) */ }
 
 (async () => {
   if (!tutorialId) { document.body.innerHTML = "<p style='padding:40px'>Open the editor from the dashboard.</p>"; return; }

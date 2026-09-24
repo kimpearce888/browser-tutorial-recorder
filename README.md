@@ -9,17 +9,17 @@ Everything stays on your device. No accounts, no cloud uploads, no telemetry.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-34A853)](https://developer.chrome.com/docs/extensions/mv3/)
-[![Tests: 233](https://img.shields.io/badge/Tests-233%20passing-success)](./test-suite.mjs)
+[![Tests: 260](https://img.shields.io/badge/Tests-260%20passing-success)](./test-suite.mjs)
 [![CI](https://github.com/kimpearce888/browser-tutorial-recorder/actions/workflows/ci.yml/badge.svg)](https://github.com/kimpearce888/browser-tutorial-recorder/actions/workflows/ci.yml)
-[![Version: 2.0.7](https://img.shields.io/badge/Version-2.0.7-ff7352)](./manifest.json)
+[![Version: 2.1.0](https://img.shields.io/badge/Version-2.1.0-ff7352)](./manifest.json)
 
-**Version: v2.0.7** — a complete, from-scratch rewrite of the recording engine built for reliability.
+**Version: v2.1.0** — a complete, from-scratch rewrite of the recording engine built for reliability.
 
 ---
 
 ## Why you'll love it
 
-**Record once, share forever.** Click Start, do your workflow, click Stop. Every interaction becomes a step with a smart, auto-generated description — "Click the Submit button" instead of "Click the selected element."
+**Record once, share forever.** Click Start, do your workflow, click Stop. Every meaningful interaction becomes a step with a smart, auto-generated description — Click "Submit", Type "ada@example.com" into "Email" — cropped to the element you clicked, with a click marker stamped on the image, exactly like Scribe and Tango.
 
 **Edit like a pro.** Nine annotation tools (highlight, rectangle, circle, arrow, text, blur, redaction, spotlight, numbered markers), crop, merge, split, duplicate, reorder by drag, and a 60-step undo history.
 
@@ -34,8 +34,9 @@ Everything stays on your device. No accounts, no cloud uploads, no telemetry.
 ### Recording
 
 - **One-click recording** with a live toolbar badge showing the step count
-- **15 event types captured**: CLICK, DOUBLE_CLICK, RIGHT_CLICK, MIDDLE_CLICK, TYPE, SELECT, CHECKBOX, RADIO, SUBMIT, SCROLL, KEYBOARD, DROP, NAVIGATION, NEW_TAB, NEW_WINDOW
+- **Action-focused event capture**: CLICK, DOUBLE_CLICK, RIGHT_CLICK, MIDDLE_CLICK, TYPE (with the typed text), SELECT, CHECKBOX, RADIO, SUBMIT, KEYBOARD, DROP, NAVIGATION, NEW_TAB — scrolling is positioning, not a step; a "Navigate to …" opener step starts every tutorial
 - **Fire-and-forget event pipeline** — user actions are never dropped waiting on a screenshot
+- **Clean, professional screenshots** — recorder UI is hidden during capture, steps are auto-cropped to the clicked element (optional, on by default), and the click marker is stamped onto the image by the service worker for a consistent look
 - **Multi-tab support** — follows your workflow across tabs and new windows automatically
 - **SPA navigation capture** — records `history.pushState` / `hashchange` (React, Vue, Angular)
 - **Smart double-click detection** via `event.detail` (browser-authoritative)
@@ -173,7 +174,7 @@ The v2.0.0 recording engine was rebuilt from scratch around four reliability pri
 ├── annotation-geom.js         # Pure annotation hit/rotate/crop geometry (unit-tested)
 ├── gif-encoder.js             # GIF89a + LZW encoder
 ├── theme-boot.js, theme.css   # Theme bootstrap + variables
-├── test-suite.mjs             # Automated test suite (233 tests)
+├── test-suite.mjs             # Automated test suite (260 tests)
 ├── package.json               # Node dev dependencies (jsdom for tests)
 ├── .github/workflows/ci.yml   # CI workflow
 └── icons/                     # Extension icons (16/32/48/128 PNG)
@@ -183,7 +184,7 @@ The v2.0.0 recording engine was rebuilt from scratch around four reliability pri
 
 ## Quality assurance
 
-- **233 automated tests** covering `recorder-core.js`, `shared.js`, `settings-store.js`, `gif-encoder.js`, `exporter.js`, and the real `content.js` (evaluated in jsdom)
+- **260 automated tests** covering `recorder-core.js`, `shared.js`, `settings-store.js`, `gif-encoder.js`, `exporter.js`, and the real `content.js` (evaluated in jsdom)
 - **Static analysis** — all JS files pass `node --check` syntax validation
 - **CI workflow** — tests auto-run on every push and pull request via GitHub Actions
 
