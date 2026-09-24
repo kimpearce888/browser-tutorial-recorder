@@ -1,5 +1,6 @@
 import { bgCall } from "./common-ui.js";
-import { formatBytes, downloadBlob } from "./shared.js";
+import { formatBytes } from "./shared.js";
+import { downloadBlob } from "./exporter.js";
 import { EDITOR_ACTIONS, normalizeCombo, findShortcutConflicts } from "./settings-store.js";
 
 const $ = (id) => document.getElementById(id);

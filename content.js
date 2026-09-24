@@ -677,6 +677,15 @@
   window.addEventListener("mousedown", (e) => {
     if (inBtrUi(e.target)) return;
     spawnClickRing(e.clientX, e.clientY);
+    // Ask for the frame NOW, before this click's consequences render —
+    // navigation, SPA route changes and menus all outrun a capture taken
+    // after the click event. The service worker grabs the current view and
+    // holds it; the click step reuses it, so the cursor ring sits on the
+    // exact state the user saw. Non-click mousedowns (text selection, drags)
+    // just let the held frame expire.
+    if (e.button === 0 && attached && !paused) {
+      safeSend({ type: "BTR_PRE_CAPTURE", viewport: viewport() });
+    }
   }, { capture: true, passive: true });
   window.addEventListener("scroll", positionClickRings, { passive: true, capture: true });
 

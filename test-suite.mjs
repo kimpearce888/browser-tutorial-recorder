@@ -1193,6 +1193,14 @@ section("v2.0.7 — click-point overlay only: no cursor follower (content.js in 
   assert(hooks.clickRingCount() === 1, "exactly one click ring is alive after one click");
   assert(layer.children.length === 1, "the overlay layer contains only the click ring (no follower dot/ring)");
 
+  // v2.1.2 — the same mousedown asks the SW for the pre-click frame, so the
+  // step screenshot shows the page BEFORE the click's consequences render.
+  eq(sent.filter((m) => m && m.type === "BTR_PRE_CAPTURE").length, 1,
+    "mousedown while recording requests the pre-capture frame");
+  window.dispatchEvent(new window.MouseEvent("mousemove", { clientX: 140, clientY: 100, bubbles: true }));
+  eq(sent.filter((m) => m && m.type === "BTR_PRE_CAPTURE").length, 1,
+    "mousemove never triggers a pre-capture");
+
   const recBefore = sent.filter((m) => m && m.type === "REC_EVENT").length;
   doc.getElementById("b").click();
   await new Promise((r) => setTimeout(r, 50));
@@ -1562,6 +1570,261 @@ section("v2.1.0 — crop metadata round-trips through normalizeTutorial");
   });
   assert(withoutCrop.steps[0].screenshot.crop === undefined,
     "steps without a crop stay crop-free (old tutorials unchanged)");
+}
+
+/* ------------------------------------------------------------------ */
+
+section("v2.1.2 — every module import resolves to a real export (settings-page crash regression)");
+
+{
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const root = new URL("./", import.meta.url).pathname;
+  const jsFiles = fs.readdirSync(root).filter((f) => f.endsWith(".js") && f !== "test-suite.mjs");
+
+  // v2.0.x shipped `import { downloadBlob } from "./shared.js"` in settings.js
+  // while downloadBlob lived in exporter.js — a SyntaxError that killed the
+  // ENTIRE settings page at load, invisible to jsdom because no test ever
+  // imported settings.js. This static cross-check pins every named import in
+  // every runtime module to a real export, so the whole bug class dies here.
+  const exportCache = new Map();
+  function exportsOf(file) {
+    if (exportCache.has(file)) return exportCache.get(file);
+    const names = new Set();
+    const src = fs.readFileSync(path.join(root, file), "utf8");
+    const declRe = /export\s+(?:async\s+)?(?:function|const|let|var|class)\s+([A-Za-z_$][\w$]*)/g;
+    let m;
+    while ((m = declRe.exec(src))) names.add(m[1]);
+    const listRe = /export\s*\{([^}]+)\}/g;
+    while ((m = listRe.exec(src))) {
+      for (const part of m[1].split(",")) {
+        const seg = part.trim();
+        if (!seg) continue;
+        const asMatch = seg.match(/^[\w$]+\s+as\s+([\w$]+)$/);
+        names.add(asMatch ? asMatch[1] : seg.split(/\s+/)[0]);
+      }
+    }
+    if (/export\s+default\b/.test(src)) names.add("default");
+    exportCache.set(file, names);
+    return names;
+  }
+
+  let checked = 0;
+  for (const file of jsFiles) {
+    const src = fs.readFileSync(path.join(root, file), "utf8");
+    const importRe = /import\s+(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{([^}]*)\}|\*\s+as\s+([A-Za-z_$][\w$]*))?\s*from\s*["'](\.[^"']+)["']/g;
+    let m;
+    while ((m = importRe.exec(src))) {
+      const target = path.basename(m[4]);
+      checked++;
+      assert(fs.existsSync(path.join(root, target)),
+        `${file} imports an existing module (${m[4]})`);
+      const names = exportsOf(target);
+      if (m[2]) {
+        for (const part of m[2].split(",")) {
+          const seg = part.trim();
+          if (!seg) continue;
+          const asMatch = seg.match(/^([\w$]+)\s+as\s+[\w$]+$/);
+          const wanted = asMatch ? asMatch[1] : seg;
+          assert(names.has(wanted), `${file} imports { ${wanted} } — exported by ${target}`);
+        }
+      }
+      if (m[1]) assert(names.has("default"), `${file} default-imports ${target} (which exports a default)`);
+    }
+  }
+  assert(checked >= 15, `cross-checked ${checked} import statements across ${jsFiles.length} runtime modules`);
+
+  // Settings page regression, end to end: the exact import that crashed it.
+  const settingsSrc = fs.readFileSync(path.join(root, "settings.js"), "utf8");
+  assert(!/import\s*\{[^}]*downloadBlob[^}]*\}\s*from\s*["']\.\/shared\.js["']/.test(settingsSrc),
+    "settings.js no longer imports downloadBlob from shared.js (crashed the page at load)");
+  assert(/import\s*\{[^}]*downloadBlob[^}]*\}\s*from\s*["']\.\/exporter\.js["']/.test(settingsSrc),
+    "settings.js imports downloadBlob from exporter.js where it is exported");
+}
+
+/* ------------------------------------------------------------------ */
+
+section("v2.1.2 — mousedown pre-capture: click steps show the pre-click frame");
+
+{
+  const TAB1 = { id: 7, windowId: 7, url: "https://example.com/spa", title: "SPA App", active: true };
+  const tabsMap = new Map([[7, TAB1]]);
+  const store = { local: new Map(), session: new Map() };
+  const mkStorage = (m) => ({
+    get: async (keys) => {
+      const out = {};
+      for (const k of (Array.isArray(keys) ? keys : [keys])) if (m.has(k)) out[k] = m.get(k);
+      return out;
+    },
+    set: async (obj) => { for (const [k, v] of Object.entries(obj)) m.set(k, v); },
+    remove: async (keys) => { for (const k of (Array.isArray(keys) ? keys : [keys])) m.delete(k); }
+  });
+  const bgMessageHandlers = [];
+  let shotN = 0;
+  const shots = [];
+  const captureMock = async () => {
+    shotN++;
+    shots.push(`data:image/png;base64,SHOT-${shotN}`);
+    return shots[shots.length - 1];
+  };
+
+  globalThis.chrome = {
+    runtime: {
+      id: "btr-test-ext",
+      getURL: (p) => `chrome-extension://btr-test-ext/${p || ""}`,
+      getPlatformInfo: async () => ({}),
+      onMessage: { addListener: (fn) => bgMessageHandlers.push(fn) }
+    },
+    storage: {
+      local: mkStorage(store.local),
+      session: mkStorage(store.session),
+      onChanged: { addListener: () => {} }
+    },
+    action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
+    scripting: { executeScript: async () => [{ result: null }] },
+    commands: { onCommand: { addListener: () => {} } },
+    tabs: {
+      query: async (q) => (q && q.active ? [TAB1] : [...tabsMap.values()]),
+      get: async (id) => tabsMap.get(id) || null,
+      create: async (o) => ({ id: 99, ...o }),
+      update: async () => ({}),
+      remove: async () => {},
+      sendMessage: async () => {},
+      captureVisibleTab: captureMock,
+      onUpdated: { addListener: () => {} },
+      onActivated: { addListener: () => {} },
+      onCreated: { addListener: () => {} },
+      onRemoved: { addListener: () => {} }
+    }
+  };
+
+  await import("./background.js?pre-capture");
+
+  const callBg = (message, sender) => Promise.race([
+    new Promise((resolve) => { bgMessageHandlers[0](message, sender, resolve); }),
+    new Promise((r) => setTimeout(() => r(undefined), 500))
+  ]);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Grabs may sit behind the 560ms pacing gate — always poll, never sleep-and-hope.
+  const waitForShots = async (target, maxMs = 3000) => {
+    for (let i = 0; i < Math.ceil(maxMs / 100) && shots.length < target; i++) await sleep(100);
+  };
+  const contentSender = { id: "btr-test-ext", tab: { id: 7, windowId: 7 }, frameId: 0, url: "https://example.com/spa" };
+  const pageSender = { id: "btr-test-ext", tab: { id: 42, windowId: 3 }, frameId: 0, url: "chrome-extension://btr-test-ext/popup.html" };
+  const clickEvent = (i, extra = {}) => ({
+    type: "REC_EVENT", event: "CLICK", url: "https://example.com/spa", frameUrl: "https://example.com/spa",
+    isIframe: false, frameNonce: null, overlayActive: true, description: `Click ${i}`,
+    target: { selector: `#b${i}`, tag: "button", text: `B${i}`, point: { x: 20 + i, y: 30 } },
+    viewport: { width: 1280, height: 720, devicePixelRatio: 1 }, ...extra
+  });
+
+  // showCursor off + no crop keeps finishScreenshot byte-transparent, so the
+  // capture-count assertions below pin exactly which frame each step used.
+  await callBg({ type: "SAVE_SETTINGS", patch: { captureDelayMs: 0, showCursor: false, autoElementCrop: false } }, pageSender);
+  const startRes = await callBg({ type: "START_RECORDING" }, pageSender);
+  assert(startRes && startRes.ok === true, "recording starts for the pre-capture test");
+  for (let i = 0; i < 40; i++) {
+    const ui = await callBg({ type: "GET_UI_STATE" }, pageSender);
+    if (ui && ui.uiState.session && ui.uiState.session.stepCount >= 1) break;
+    await sleep(100);
+  }
+  eq(shots.length, 1, "opener step consumed exactly one live capture");
+
+  // (1) pre-capture at mousedown, click consumes it — no second grab, no race
+  bgMessageHandlers[0]({ type: "BTR_PRE_CAPTURE" }, contentSender, () => {});
+  await waitForShots(2);
+  eq(shots.length, 2, "pre-capture grabs exactly one frame at mousedown");
+  bgMessageHandlers[0](clickEvent(1), contentSender, () => {});
+  await sleep(800);
+  eq(shots.length, 2, "click step reuses the pre-shot — captureVisibleTab NOT called again");
+  let ui = await callBg({ type: "GET_UI_STATE" }, pageSender);
+  eq(ui.uiState.session.stepCount, 2, "pre-captured click commits a step");
+
+  // (2) click with NO pre-capture falls back to one live capture
+  bgMessageHandlers[0](clickEvent(2), contentSender, () => {});
+  await sleep(900);
+  eq(shots.length, 3, "click without a pre-shot falls back to exactly one live capture");
+  ui = await callBg({ type: "GET_UI_STATE" }, pageSender);
+  eq(ui.uiState.session.stepCount, 3, "fallback click commits");
+
+  // (3) TYPE captures live (it wants the post-typing state) and does NOT
+  // consume the held pre-shot
+  bgMessageHandlers[0]({ type: "BTR_PRE_CAPTURE" }, contentSender, () => {});
+  await waitForShots(shots.length + 1);
+  const preCount = shots.length;
+  bgMessageHandlers[0]({
+    type: "REC_EVENT", event: "TYPE", url: "https://example.com/spa", frameUrl: "https://example.com/spa",
+    isIframe: false, frameNonce: null, overlayActive: false, description: "Type user@example.com into \"Email\"",
+    target: { selector: "#email", tag: "input", text: "Email", point: { x: 40, y: 60 } },
+    viewport: { width: 1280, height: 720, devicePixelRatio: 1 }
+  }, contentSender, () => {});
+  await sleep(900);
+  eq(shots.length, preCount + 1, "TYPE captures live — one fresh grab, pre-shot untouched");
+  ui = await callBg({ type: "GET_UI_STATE" }, pageSender);
+  eq(ui.uiState.session.stepCount, 4, "TYPE commits its own step");
+
+  // (4) the pre-shot is still held — the next click consumes it with no new grab
+  bgMessageHandlers[0](clickEvent(3), contentSender, () => {});
+  await sleep(900);
+  eq(shots.length, preCount + 1, "click after TYPE reuses the still-held pre-shot (within TTL)");
+  ui = await callBg({ type: "GET_UI_STATE" }, pageSender);
+  eq(ui.uiState.session.stepCount, 5, "click commits after TYPE");
+
+  // (5) nothing held anymore — a fresh click captures live exactly once
+  bgMessageHandlers[0](clickEvent(4), contentSender, () => {});
+  await sleep(900);
+  eq(shots.length, preCount + 2, "with no pre-shot held, the click captures live exactly once");
+  ui = await callBg({ type: "GET_UI_STATE" }, pageSender);
+  eq(ui.uiState.session.stepCount, 6, "final plain click commits");
+
+  // (6) SUBMIT adopts the screenshot of the CLICK step it replaces — by the
+  // time SUBMIT arrives the form may already be navigating, so a live grab
+  // would race; the adopt keeps the pre-click button frame with its marker.
+  const beforeSubmitShots = shots.length;
+  const beforeSubmitSteps = ui.uiState.session.stepCount;
+  bgMessageHandlers[0](clickEvent(9), contentSender, () => {});
+  await sleep(900);
+  bgMessageHandlers[0](clickEvent(9, { event: "SUBMIT", description: "Submit the form" }), contentSender, () => {});
+  await sleep(900);
+  ui = await callBg({ type: "GET_UI_STATE" }, pageSender);
+  eq(ui.uiState.session.stepCount, beforeSubmitSteps + 1, "SUBMIT replaces the CLICK step (net +1 step)");
+  eq(shots.length, beforeSubmitShots + 1, "SUBMIT adopts the replaced step's screenshot — no second capture");
+
+  delete globalThis.chrome;
+}
+
+/* ------------------------------------------------------------------ */
+
+section("v2.1.2 — SUBMIT adopts the replaced CLICK step's screenshot (recorder-core)");
+
+{
+  const { createRecorder } = await import("./recorder-core.js?submit-adopt");
+  const rec = createRecorder();
+  rec.startRecording({ id: 3, windowId: 3, url: "https://shop.example/", title: "Shop" }, {});
+  const target = { selector: "#signin", tag: "button", text: "Sign in", point: { x: 120, y: 88 } };
+  const vp = { width: 1024, height: 768, devicePixelRatio: 2 };
+  const clickEvt = { event: "CLICK", url: "https://shop.example/", target, viewport: vp, description: "Click the \"Sign in\" button" };
+  const v1 = rec.handleEvent(clickEvt, { tabId: 3 });
+  assert(v1.action === "captured" && v1.needsCursor === true, "CLICK needs the cursor marker");
+  const shot = { image: "data:image/png;base64,ADOPT-ME", width: 1024, height: 768, dpr: 2 };
+  rec.commitStep(clickEvt, shot);
+  eq(rec.uiState().session.stepCount, 1, "CLICK step committed first");
+
+  const submitEvt = { event: "SUBMIT", url: "https://shop.example/", target, viewport: vp, description: "Submit the sign-in form" };
+  const v2 = rec.handleEvent(submitEvt, { tabId: 3 });
+  assert(v2.action === "captured", "SUBMIT commits after replacing the CLICK");
+  eq(v2.needsCursor, true, "SUBMIT carries the cursor marker (it is the button click)");
+  assert(v2.adoptScreenshot && v2.adoptScreenshot.image === shot.image && v2.adoptScreenshot.width === 1024,
+    "SUBMIT adopts the CLICK step's pre-click screenshot (image + dimensions)");
+  const committed = rec.commitStep(submitEvt, v2.adoptScreenshot);
+  eq(committed.step.screenshot.image, "data:image/png;base64,ADOPT-ME", "committed SUBMIT step keeps the adopted pre-click image");
+  eq(rec.uiState().session.stepCount, 1, "net one step for the submit click (CLICK replaced, not duplicated)");
+
+  const v3 = rec.handleEvent({
+    event: "SUBMIT", url: "https://shop.example/",
+    target: { selector: "#other", tag: "button", text: "Other", point: { x: 1, y: 2 } }, viewport: vp
+  }, { tabId: 3 });
+  assert(v3.action === "captured" && !v3.adoptScreenshot, "unmatched SUBMIT commits without an adopted screenshot");
 }
 
 /* ------------------------------------------------------------------ */

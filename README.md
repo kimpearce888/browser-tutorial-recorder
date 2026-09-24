@@ -9,9 +9,9 @@ Everything stays on your device. No accounts, no cloud uploads, no telemetry.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-34A853)](https://developer.chrome.com/docs/extensions/mv3/)
-[![Tests: 260](https://img.shields.io/badge/Tests-260%20passing-success)](./test-suite.mjs)
+[![Tests: 367](https://img.shields.io/badge/Tests-367%20passing-success)](./test-suite.mjs)
 [![CI](https://github.com/kimpearce888/browser-tutorial-recorder/actions/workflows/ci.yml/badge.svg)](https://github.com/kimpearce888/browser-tutorial-recorder/actions/workflows/ci.yml)
-[![Version: 2.1.0](https://img.shields.io/badge/Version-2.1.0-ff7352)](./manifest.json)
+[![Version: 2.1.2](https://img.shields.io/badge/Version-2.1.2-ff7352)](./manifest.json)
 
 **Version: v2.1.0** — a complete, from-scratch rewrite of the recording engine built for reliability.
 

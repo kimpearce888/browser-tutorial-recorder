@@ -3,7 +3,11 @@ import { makeId } from "./shared.js";
 export const INTERNAL_URL_RE = /^(chrome|edge|about|devtools|chrome-extension|chrome-untrusted|view-source|file|moz-extension|extension):/i;
 
 export const EVENTS_NEEDING_CURSOR = new Set([
-  "CLICK", "DOUBLE_CLICK", "RIGHT_CLICK", "MIDDLE_CLICK", "DROP"
+  "CLICK", "DOUBLE_CLICK", "RIGHT_CLICK", "MIDDLE_CLICK", "DROP",
+  // SUBMIT replaces the click on the submit button (suppressNextClick), so
+  // its step carries the marker too — Scribe/Tango mark the Sign in / Submit
+  // button exactly like any other click.
+  "SUBMIT"
 ]);
 
 export function hostnameOf(url) {
@@ -228,14 +232,20 @@ export function createRecorder(deps = {}) {
     }
 
     if (event === "SUBMIT") {
+      // The click on the submit button already committed a step a moment ago
+      // (with the mousedown pre-shot). Replace it — and ADOPT its screenshot
+      // instead of re-capturing: by the time SUBMIT arrives the form may
+      // already be navigating, and the step must show the button pre-click
+      // with its marker, exactly like Scribe/Tango.
       for (let i = state.steps.length - 1; i >= 0 && i >= state.steps.length - 5; i--) {
         const prev = state.steps[i];
         if (prev.action !== "CLICK") continue;
         if (!sameTarget(prev.target, evt.target)) continue;
         if (now() - prev.screenshot.timestamp > 1500) continue;
+        const adopted = prev.screenshot;
         state.steps.splice(i, 1);
         renumberFrom(i);
-        break;
+        return { action: "captured", event, tabId, url, needsCursor: true, adoptScreenshot: adopted };
       }
     }
 

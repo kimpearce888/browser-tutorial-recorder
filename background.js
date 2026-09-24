@@ -23,12 +23,23 @@ let keepAliveTimer = null;
 let captureBlocked = false;
 let lastCaptureAt = 0;
 
+// Click steps must show the page EXACTLY as the user saw it when the mouse
+// went down — not after the click's consequences (navigation, SPA route
+// change, menu closing) have already rendered. The content script asks for a
+// pre-capture at mousedown; the landed frame is held per tab and consumed by
+// the click-family step that follows. If nothing consumes it (text
+// selection, a drag, a non-recording click) it expires and costs nothing.
+const PRE_SHOT_TTL_MS = 2500;
+const PRE_SHOT_EVENTS = new Set(["CLICK", "DOUBLE_CLICK", "RIGHT_CLICK", "MIDDLE_CLICK", "SUBMIT"]);
+let preShots = new Map();   // tabId -> { dataUrl, at }
+let preFlights = new Map(); // tabId -> Promise<shot> — in-flight pre-captures
+
 function armKeepAlive() {
   if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
   if (!recorder.isRecording()) return;
   keepAliveTimer = setInterval(() => {
     if (!recorder.isRecording()) { clearInterval(keepAliveTimer); keepAliveTimer = null; return; }
-    chrome.runtime.getPlatformInfo().catch(() => {});
+    try { chrome.runtime.getPlatformInfo().catch(() => {}); } catch { /* SW API unavailable */ }
   }, 20000);
 }
 
@@ -207,6 +218,7 @@ async function startRecording() {
     title: tab && tab.title ? `Tutorial — ${tab.title}`.slice(0, 120) : "Untitled browser tutorial"
   });
   captureBlocked = false;
+  preShots.clear();
   attachedTabIds = new Set();
   if (validForRecording(tab)) {
     await injectContentScript(tab.id);
@@ -232,6 +244,7 @@ async function stopRecording(meta = {}) {
   const tutorial = recorder.buildTutorial({ ...meta });
   recorder.reset();
   attachedTabIds = new Set();
+  preShots.clear();
   clearTimeout(idleTimer);
   try {
     await dbPut(normalizeTutorial(tutorial));
@@ -406,14 +419,36 @@ async function processEvent(evt, senderInfo) {
 
   let screenshot = null;
   try {
-    const tab = await chrome.tabs.get(verdict.tabId).catch(() => null);
-    if (tab) {
-      const dataUrl = await captureVisible(tab.windowId, {
-        format: settings.screenshotFormat === "jpeg" ? "jpeg" : "png",
-        quality: settings.screenshotQuality
-      }, tab.id);
-      screenshot = await finishScreenshot(dataUrl, evt, verdict, settings);
-      captureBlocked = false;
+    if (verdict.adoptScreenshot) {
+      // SUBMIT replaced the recent CLICK step on the same target and adopted
+      // its pre-click screenshot — no capture needed, no navigation race.
+      screenshot = verdict.adoptScreenshot;
+    } else {
+      const tab = await chrome.tabs.get(verdict.tabId).catch(() => null);
+      if (tab) {
+        // Click-family steps reuse the mousedown pre-shot — the frame grabbed
+        // BEFORE the click could navigate or re-render the page, so the marker
+        // sits on the exact state the user acted on. Everything else (TYPE,
+        // SELECT, …) still captures live: it wants the post-action state.
+        let dataUrl = null;
+        if (PRE_SHOT_EVENTS.has(verdict.event)) {
+          let held = preShots.get(verdict.tabId);
+          if (!held && preFlights.has(verdict.tabId)) {
+            await preFlights.get(verdict.tabId).catch(() => null);
+            held = preShots.get(verdict.tabId);
+          }
+          preShots.delete(verdict.tabId); // one-shot, whatever the outcome
+          if (held && (Date.now() - held.at) <= PRE_SHOT_TTL_MS) dataUrl = held.dataUrl;
+        }
+        if (!dataUrl) {
+          dataUrl = await captureVisible(tab.windowId, {
+            format: settings.screenshotFormat === "jpeg" ? "jpeg" : "png",
+            quality: settings.screenshotQuality
+          }, tab.id);
+        }
+        screenshot = await finishScreenshot(dataUrl, evt, verdict, settings);
+        captureBlocked = false;
+      }
     }
   } catch (e) {
     console.warn("[BTR] capture failed:", String(e && e.message || e));
@@ -458,6 +493,44 @@ async function handleContentMessage(message, sender) {
       enqueueEvent(message.event ? message : null, senderInfo);
       break;
     }
+    case "BTR_PRE_CAPTURE": {
+      if (!recorder.isRecording() || fullPageInProgress || tabId == null) break;
+      if (preFlights.has(tabId)) break; // one grab per mousedown is enough
+      // Register the flight SYNCHRONOUSLY — the click REC_EVENT may arrive a
+      // few milliseconds later and must find the in-flight capture, never a
+      // gap where it would fall back to a racy live grab.
+      const flight = (async () => {
+        try {
+          const preSettings = await getSettings();
+          const tab = await chrome.tabs.get(tabId).catch(() => null);
+          if (!tab) return null;
+          const dataUrl = await captureVisible(tab.windowId, {
+            format: preSettings.screenshotFormat === "jpeg" ? "jpeg" : "png",
+            quality: preSettings.screenshotQuality
+          }, tab.id);
+          captureBlocked = false;
+          return { dataUrl, at: Date.now() };
+        } catch (e) {
+          // A failed pre-capture must never break recording — the step will
+          // simply fall back to the live capture below.
+          console.warn("[BTR] pre-capture failed (step will capture live):", String(e && e.message || e));
+          return null;
+        }
+      })();
+      preFlights.set(tabId, flight);
+      try {
+        const landed = await flight;
+        if (landed) {
+          preShots.set(tabId, landed);
+          for (const [k, v] of preShots) {
+            if (Date.now() - v.at > PRE_SHOT_TTL_MS) preShots.delete(k);
+          }
+        }
+      } finally {
+        preFlights.delete(tabId);
+      }
+      break;
+    }
     case "TOOLBAR_TOGGLE_PAUSE": {
       if (!recorder.isActive()) break;
       if (recorder.isRecording()) recorder.setPaused(true, "manual");
@@ -483,6 +556,7 @@ async function handleContentMessage(message, sender) {
 async function captureFullPage(tabId, onShotsDone) {
   if (fullPageInProgress) throw new Error("A full-page capture is already running.");
   fullPageInProgress = true;
+  preShots.clear();
   const captures = [];
   let cssWidth = 0, cssHeight = 0, dpr = 1;
   let restoreY = 0;

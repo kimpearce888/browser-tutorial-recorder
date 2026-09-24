@@ -1,5 +1,18 @@
 # Changelog
 
+## v2.1.2 — 2026-09-24
+
+### Fixed — settings page revived; cursor ring lands at the right time
+
+Live-reported on v2.1.1: "Uncaught SyntaxError: The requested module './shared.js' does not provide an export named 'downloadBlob'" (settings.html), "it is not taking cursor image with ring right time".
+
+- **The settings page loads again.** `settings.js` imported `downloadBlob` from `./shared.js`, but that export lives in `./exporter.js` — a module-resolution SyntaxError thrown at load that killed the entire Settings page since the v2.0.0 rewrite (no UI, no storage tools, nothing). The import now points at the right module. This whole bug class is now dead: a new static analysis test cross-checks **every named import in every runtime module against the target's real exports** (37 import statements across all 20 modules), so a missing export anywhere fails the suite instead of blanking a page in Chrome.
+- **Click steps now show the page exactly as the user saw it when the mouse went down.** The screenshot used to be taken after the click's consequences had already rendered — navigation, SPA route changes and closing menus all outran the capture queue — so the cursor ring frequently sat on the wrong page, the wrong state, or no image at all. The content script now requests a **pre-capture at mousedown**, before the click can change anything; the service worker grabs that frame through the usual quota gate, holds it per tab (2.5 s TTL), and the click-family step (CLICK / DOUBLE_CLICK / RIGHT_CLICK / MIDDLE_CLICK / SUBMIT) consumes it **instead of capturing again** — no extra quota spend, no race. Non-click mousedowns (text selections, drags) just let the held frame expire; TYPE/SELECT/CHECKBOX steps still capture live because they want the post-action state (typed text, checked box). A click with no pre-shot (capture failed at mousedown) falls back to the previous live capture.
+- **Submit buttons finally carry the marker.** A form-submit click used to swap in a SUBMIT step re-captured *after* the form started navigating — racy screenshot, no ring. SUBMIT now replaces the recent same-target CLICK step and **adopts its pre-click screenshot** (marker on the button, zero extra capture, no navigation race), and SUBMIT steps are marked like the button clicks they are.
+- Keep-alive ping hardened against missing `chrome.runtime.getPlatformInfo`.
+
+**Tests: 367/367 pass** (new: full import/export cross-check + the exact settings.js regression; end-to-end pre-capture pipeline — pre-shot consumed with no second grab, live fallback, TYPE does not consume the held shot, TTL reuse, SUBMIT adopt; recorder-core SUBMIT-adopt units).
+
 ## v2.1.1 — 2026-09-24
 
 ### Fixed — steps show the full current view again; every editor tool now behaves
