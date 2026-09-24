@@ -208,3 +208,24 @@ h2 { font-size: 13.5px; text-transform: uppercase; letter-spacing: .04em; color:
 .btn.ghost { background: transparent; }
 .btn.danger { border-color: var(--danger); color: var(--danger); }
 .btn:hover { filter: brightness(0.97); }
+
+/* Crop tool: floating action bar over the canvas */
+.canvas-wrap { position: relative; }
+.crop-bar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  background: rgba(21, 22, 26, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 6;
+}
+.crop-bar .crop-hint { font-size: 12px; color: #fff; white-space: nowrap; }
+.crop-bar.hidden { display: none; }
+#btn-crop.active { border-color: var(--accent); color: var(--accent); }

@@ -23,16 +23,16 @@
   let lastHeartbeat = 0;
 
   // ----------------------------------------------------------------
-  // Live cursor overlay: drawn INTO the page so every screenshot
-  // contains the cursor at the exact live position (no post-capture
-  // stamping lag, correct placement even in iframes — each frame
-  // composites its own overlay).
+  // Click-point overlay, drawn INTO the page. NOTHING follows the
+  // mouse — a ring appears only where the user actually clicks, stays
+  // glued to that content (page-anchored) until the step's screenshot
+  // has been taken, then fades. Between clicks the page is untouched,
+  // exactly like standard tutorial recorders.
   // ----------------------------------------------------------------
   const CURSOR_LAYER_ID = "__btr-cursor-layer";
   const TOOLBAR_ID = "__btr-toolbar";
+  const RING_HOLD_MS = 2600;
   let cursorLayer = null;
-  let cursorDot = null;
-  let cursorRing = null;
   const clickRings = new Set();
   let toolbar = null;
   let toolbarPauseBtn = null;
@@ -48,32 +48,7 @@
     cursorLayer.id = CURSOR_LAYER_ID;
     cursorLayer.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none;";
     (document.body || document.documentElement).appendChild(cursorLayer);
-    cursorRing = document.createElement("div");
-    cursorRing.style.cssText = "position:fixed;left:0;top:0;width:36px;height:36px;margin:-18px 0 0 -18px;"
-      + "border-radius:50%;border:3px solid rgba(255,113,82,.92);background:rgba(255,113,82,.16);"
-      + "box-shadow:0 0 0 1px rgba(255,255,255,.55),inset 0 0 8px rgba(255,113,82,.3);opacity:0;will-change:transform;";
-    cursorDot = document.createElement("div");
-    cursorDot.style.cssText = "position:fixed;left:0;top:0;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;"
-      + "border-radius:50%;background:rgba(255,113,82,.98);box-shadow:0 0 0 2px rgba(255,255,255,.9);"
-      + "opacity:0;will-change:transform;";
-    cursorLayer.appendChild(cursorRing);
-    cursorLayer.appendChild(cursorDot);
     return cursorLayer;
-  }
-
-  function hideCursorFollower() {
-    if (cursorDot) cursorDot.style.opacity = "0";
-    if (cursorRing) cursorRing.style.opacity = "0";
-  }
-
-  function moveCursorFollower(x, y) {
-    if (!cursorOverlayOn()) { hideCursorFollower(); return; }
-    ensureCursorLayer();
-    const t = `translate3d(${Math.round(x)}px,${Math.round(y)}px,0)`;
-    cursorDot.style.transform = t;
-    cursorRing.style.transform = t;
-    cursorDot.style.opacity = "1";
-    cursorRing.style.opacity = "1";
   }
 
   // Click rings are anchored to PAGE coordinates so they stay glued to the
@@ -86,28 +61,40 @@
     }
   }
 
+  function retireRing(ring) {
+    if (!clickRings.has(ring)) return;
+    clearTimeout(ring.__btrFade);
+    ring.style.opacity = "0";
+    setTimeout(() => { ring.remove(); clickRings.delete(ring); }, 280);
+  }
+
+  // The service worker sends BTR_STEP_COUNT right after a step's screenshot
+  // is committed, so retiring the OLDEST ring there maps 1:1 clicks -> shots
+  // (captures are serialized in click order) without ever blinking a ring a
+  // capture still needs.
+  function retireOldestRing() {
+    for (const ring of clickRings) { retireRing(ring); return; }
+  }
+
   function spawnClickRing(clientX, clientY) {
     if (!cursorOverlayOn()) return;
-    ensureCursorLayer();
+    const layer = ensureCursorLayer();
     const ring = document.createElement("div");
     ring.__btrX = clientX + (window.scrollX || 0);
     ring.__btrY = clientY + (window.scrollY || 0);
     ring.style.cssText = "position:absolute;left:0;top:0;width:40px;height:40px;margin:-20px 0 0 -20px;"
       + "border-radius:50%;border:4px solid rgba(255,113,82,.95);background:rgba(255,113,82,.2);"
       + "box-shadow:0 0 0 1px rgba(255,255,255,.6);will-change:transform,opacity;transition:opacity .25s;";
-    cursorLayer.appendChild(ring);
+    layer.appendChild(ring);
     clickRings.add(ring);
     positionClickRings();
-    setTimeout(() => {
-      ring.style.opacity = "0";
-      setTimeout(() => { ring.remove(); clickRings.delete(ring); }, 280);
-    }, 1250);
+    ring.__btrFade = setTimeout(() => retireRing(ring), RING_HOLD_MS);
   }
 
   function clearCursorOverlay() {
-    for (const ring of clickRings) ring.remove();
+    for (const ring of clickRings) { clearTimeout(ring.__btrFade); ring.remove(); }
     clickRings.clear();
-    if (cursorLayer) { cursorLayer.remove(); cursorLayer = null; cursorDot = null; cursorRing = null; }
+    if (cursorLayer) { cursorLayer.remove(); cursorLayer = null; }
   }
 
   // ----------------------------------------------------------------
@@ -474,7 +461,7 @@
       frameUrl: location.href,
       isIframe: !IS_TOP,
       frameNonce: IS_TOP ? null : FRAME_NONCE,
-      overlayActive: cursorOverlayOn(),
+      overlayActive: clickRings.size > 0,
       description: el ? describe(event, el, extra || {}) : (extra && extra.description) || "",
       viewport: viewport(),
       target: el ? {
@@ -641,8 +628,6 @@
   window.addEventListener("resize", scheduleMaskWork, { passive: true });
   new MutationObserver(scheduleMaskWork).observe(document.documentElement, { childList: true, subtree: true });
 
-  window.addEventListener("mousemove", (e) => moveCursorFollower(e.clientX, e.clientY), { passive: true, capture: true });
-  document.addEventListener("mouseleave", hideCursorFollower, true);
   window.addEventListener("mousedown", (e) => {
     if (inBtrUi(e.target)) return;
     spawnClickRing(e.clientX, e.clientY);
@@ -681,8 +666,9 @@
       clearMasks();
       clearCursorOverlay();
       removeToolbar();
-    } else if (message.type === "BTR_STEP_COUNT" && toolbarCount) {
-      toolbarCount.textContent = String(Number(message.count) || 0);
+    } else if (message.type === "BTR_STEP_COUNT") {
+      if (toolbarCount) toolbarCount.textContent = String(Number(message.count) || 0);
+      retireOldestRing();
     }
     return undefined;
   });
@@ -703,6 +689,7 @@
     collectSensitiveFields, cumulativeOffset, viewport,
     getState: () => ({ attached, paused, sensitivePatterns, excludedDomains, cursorEnabled }),
     cursorOverlayOn, spawnClickRing, ensureCursorLayer, ensureToolbar, inBtrUi,
+    clickRingCount: () => clickRings.size,
     ids: { CURSOR_LAYER_ID, TOOLBAR_ID }
   };
 })();

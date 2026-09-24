@@ -9,11 +9,11 @@ Everything stays on your device. No accounts, no cloud uploads, no telemetry.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-34A853)](https://developer.chrome.com/docs/extensions/mv3/)
-[![Tests: 204](https://img.shields.io/badge/Tests-204%20passing-success)](./test-suite.mjs)
+[![Tests: 233](https://img.shields.io/badge/Tests-233%20passing-success)](./test-suite.mjs)
 [![CI](https://github.com/kimpearce888/browser-tutorial-recorder/actions/workflows/ci.yml/badge.svg)](https://github.com/kimpearce888/browser-tutorial-recorder/actions/workflows/ci.yml)
-[![Version: 2.0.6](https://img.shields.io/badge/Version-2.0.6-ff7352)](./manifest.json)
+[![Version: 2.0.7](https://img.shields.io/badge/Version-2.0.7-ff7352)](./manifest.json)
 
-**Version: v2.0.6** — a complete, from-scratch rewrite of the recording engine built for reliability.
+**Version: v2.0.7** — a complete, from-scratch rewrite of the recording engine built for reliability.
 
 ---
 
@@ -170,9 +170,10 @@ The v2.0.0 recording engine was rebuilt from scratch around four reliability pri
 ├── settings.{html,js,css}     # Settings tabs
 ├── print-export.{html,js,css} # Print / PDF export layout
 ├── exporter.js                # Renders annotated canvas + exports 7 formats
+├── annotation-geom.js         # Pure annotation hit/rotate/crop geometry (unit-tested)
 ├── gif-encoder.js             # GIF89a + LZW encoder
 ├── theme-boot.js, theme.css   # Theme bootstrap + variables
-├── test-suite.mjs             # Automated test suite (204 tests)
+├── test-suite.mjs             # Automated test suite (233 tests)
 ├── package.json               # Node dev dependencies (jsdom for tests)
 ├── .github/workflows/ci.yml   # CI workflow
 └── icons/                     # Extension icons (16/32/48/128 PNG)
@@ -182,7 +183,7 @@ The v2.0.0 recording engine was rebuilt from scratch around four reliability pri
 
 ## Quality assurance
 
-- **204 automated tests** covering `recorder-core.js`, `shared.js`, `settings-store.js`, `gif-encoder.js`, `exporter.js`, and the real `content.js` (evaluated in jsdom)
+- **233 automated tests** covering `recorder-core.js`, `shared.js`, `settings-store.js`, `gif-encoder.js`, `exporter.js`, and the real `content.js` (evaluated in jsdom)
 - **Static analysis** — all JS files pass `node --check` syntax validation
 - **CI workflow** — tests auto-run on every push and pull request via GitHub Actions
 

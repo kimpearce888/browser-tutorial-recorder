@@ -9,6 +9,12 @@ const DRAFT_ID = "draft-current";
 const UI_KEY = "btr-ui-state";
 const MIN_CAPTURE_GAP_MS = 560;
 const QUEUE_LIMIT = 14;
+// The live click ring in the page fades 2600ms after the click; a capture
+// that happens later than that cannot contain it, so the SW must stamp the
+// cursor itself. Everything faster keeps the live (perfectly positioned) ring.
+const OVERLAY_VISIBLE_MS = 2600;
+const MAX_CANVAS_HEIGHT = 24000;
+const MAX_CANVAS_WIDTH = 3840;
 
 const recorder = createRecorder();
 let captureQueue = Promise.resolve();
@@ -337,13 +343,16 @@ async function processEvent(evt, senderInfo) {
     await broadcastUi();
   }
 
-  // The live in-page cursor overlay (content.js) draws the click ring and
-  // cursor follower directly into the rendered page, so the screenshot
-  // already contains the cursor at the exact live position — stamping again
-  // would double-draw it and, on pages that scrolled after the click, put
-  // the stamp in a stale spot. Only stamp for events reported WITHOUT an
-  // active overlay (e.g. a click that raced the attach).
-  if (screenshot && verdict.needsCursor && settings.showCursor !== false && evt.overlayActive !== true) {
+  // Cursor marker decision, made in exactly one place:
+  //  - overlayActive true  -> the page still shows the live click ring at the
+  //    exact click point (rings outlive the rate-limited capture), so stamping
+  //    would double-draw and risk a stale position. Skip.
+  //  - otherwise (no ring existed, or the capture was delayed past the ring's
+  //    2600ms hold and the ring has faded) -> stamp the cursor at the recorded
+  //    point so click steps never end up without a marker.
+  const elapsed = Date.now() - (evt.receivedAt || Date.now());
+  const overlayLikelyGone = !evt.overlayActive || elapsed > OVERLAY_VISIBLE_MS;
+  if (screenshot && verdict.needsCursor && settings.showCursor !== false && overlayLikelyGone) {
     const point = evt.target && evt.target.point;
     if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
       try {
@@ -386,6 +395,7 @@ async function handleContentMessage(message, sender) {
       break;
     }
     case "REC_EVENT": {
+      message.receivedAt = Date.now();
       enqueueEvent(message.event ? message : null, senderInfo);
       break;
     }
@@ -411,7 +421,7 @@ async function handleContentMessage(message, sender) {
   }
 }
 
-async function captureFullPage(tabId) {
+async function captureFullPage(tabId, onShotsDone) {
   if (fullPageInProgress) throw new Error("A full-page capture is already running.");
   fullPageInProgress = true;
   const captures = [];
@@ -419,6 +429,8 @@ async function captureFullPage(tabId) {
   let restoreY = 0;
   let scrolled = false;
   try {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    const windowId = tab && typeof tab.windowId === "number" ? tab.windowId : undefined;
     const [{ result: vp }] = await chrome.scripting.executeScript({
       target: { tabId },
       func: () => ({
@@ -432,9 +444,7 @@ async function captureFullPage(tabId) {
     if (!vp || !(vp.h > 0)) throw new Error("Could not read the page size for a full-page capture.");
     cssWidth = vp.w; cssHeight = Math.max(1, vp.h); dpr = vp.dpr || 1;
     restoreY = vp.y || 0;
-    const MAX_CANVAS_HEIGHT = 12000;
-    const MAX_CANVAS_WIDTH = 3840;
-    const maxShots = Math.max(1, Math.min(40, Math.floor(MAX_CANVAS_HEIGHT / cssHeight)));
+    const maxShots = Math.max(1, Math.min(72, Math.floor(MAX_CANVAS_HEIGHT / cssHeight)));
     await chrome.scripting.executeScript({
       target: { tabId },
       func: () => {
@@ -450,32 +460,48 @@ async function captureFullPage(tabId) {
     let pageTotal = vp.total || 0;
     for (let shot = 0; shot < maxShots; shot++) {
       // Scroll and WAIT for the viewport to actually land on the requested
-      // offset (smooth-scroll pages, lazy layout shifts) before capturing,
-      // then give the compositor a beat to paint. Each captureVisible call
-      // below is rate-limited by the global capture gate.
+      // offset (smooth-scroll pages, lazy layout shifts) before capturing.
+      // From the second shot on, fixed/sticky elements (cookie banners, nav
+      // bars, headers) are hidden: otherwise they repeat in every stitched
+      // strip, which is what made full-page shots look non-standard. They
+      // are restored once, at the end, together with the scroll position.
       const [{ result: pos }] = await chrome.scripting.executeScript({
         target: { tabId },
-        func: async (scrollToY) => {
+        func: async (scrollToY, hideFixed) => {
+          if (hideFixed) {
+            try {
+              for (const el of document.querySelectorAll("body *")) {
+                if (el.__btrFixedSeen) continue;
+                const cs = getComputedStyle(el);
+                if ((cs.position === "fixed" || cs.position === "sticky") && el.offsetWidth > 0 && el.offsetHeight > 0) {
+                  el.__btrFixedSeen = true;
+                  el.__btrFixedVis = el.style.visibility || "";
+                  el.style.visibility = "hidden";
+                  el.setAttribute("data-btr-fixed", "1");
+                }
+              }
+            } catch { /* page defends itself — capture without hiding */ }
+          }
           window.scrollTo(0, scrollToY);
           const deadline = performance.now() + 900;
           await new Promise((r) => setTimeout(r, 140));
           while (performance.now() < deadline && Math.abs(window.scrollY - scrollToY) > 2) {
             await new Promise((r) => setTimeout(r, 90));
           }
-          await new Promise((r) => setTimeout(r, 150));
+          await new Promise((r) => setTimeout(r, 280));
           return {
             y: window.scrollY,
             total: document.documentElement.scrollHeight,
             h: document.documentElement.clientHeight
           };
         },
-        args: [requested]
+        args: [requested, shot > 0]
       });
       if (!pos) break;
       if (shot > 0 && pos.y <= lastActualY) break;
       lastActualY = pos.y;
       pageTotal = Math.max(pageTotal, pos.total);
-      const dataUrl = await captureVisible(undefined, { format: "png" });
+      const dataUrl = await captureVisible(windowId, { format: "png" });
       captures.push({ dataUrl, y: pos.y });
       const next = nextScrollY(pos, requested);
       if (next == null) break;
@@ -483,6 +509,9 @@ async function captureFullPage(tabId) {
     }
 
     if (!captures.length) throw new Error("Could not capture the page for a full-page screenshot.");
+    // Shots are on disk (as data URLs) — the visible tab can go back to the
+    // editor before the slower canvas stitching starts.
+    if (typeof onShotsDone === "function") { try { await onShotsDone(); } catch { /* best effort */ } }
     const images = await Promise.all(captures.map((c) => createImageBitmapFromUrl(c.dataUrl)));
     const lastShot = captures[captures.length - 1];
     const totalHeight = Math.min(lastShot.y + cssHeight, pageTotal || lastShot.y + cssHeight);
@@ -512,6 +541,14 @@ async function captureFullPage(tabId) {
           window.scrollTo(0, y);
           const style = document.getElementById("__btr_fullpage_hide");
           if (style) style.remove();
+          try {
+            for (const el of document.querySelectorAll("[data-btr-fixed]")) {
+              el.style.visibility = el.__btrFixedVis || "";
+              delete el.__btrFixedVis;
+              delete el.__btrFixedSeen;
+              el.removeAttribute("data-btr-fixed");
+            }
+          } catch { /* best effort */ }
         },
         args: [restoreY]
       }).catch(() => {});
@@ -620,7 +657,11 @@ async function handlePageMessage(message) {
           const settings = await getSettings();
           let shot;
           if (message.mode === "full") {
-            shot = await captureFullPage(tab.id);
+            shot = await captureFullPage(tab.id, () => {
+              if (original && typeof original.id === "number") {
+                return chrome.tabs.update(original.id, { active: true }).catch(() => {});
+              }
+            });
           } else {
             const dataUrl = await captureVisible(tab.windowId, {
               format: settings.screenshotFormat === "jpeg" ? "jpeg" : "png",

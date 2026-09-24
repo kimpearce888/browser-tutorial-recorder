@@ -1130,7 +1130,7 @@ section("v2.0.6 — full-page stitcher survives the capture quota and always res
 
 /* ------------------------------------------------------------------ */
 
-section("v2.0.6 — live cursor overlay + in-page toolbar (content.js in jsdom)");
+section("v2.0.7 — click-point overlay only: no cursor follower (content.js in jsdom)");
 
 {
   const dom = new JSDOM(`<!DOCTYPE html><html><body>
@@ -1163,23 +1163,34 @@ section("v2.0.6 — live cursor overlay + in-page toolbar (content.js in jsdom)"
   assert(doc.getElementById(hooks.ids.TOOLBAR_ID), "toolbar appears while recording");
   assert(doc.getElementById(hooks.ids.TOOLBAR_ID).textContent.includes("4"), "toolbar shows the initial step count");
 
+  // THE FIX: moving the mouse must NOT draw anything. The v2.0.6 follower
+  // ring hung around wherever the pointer last was — a cursor was visible
+  // on pages the user was only reading.
   window.dispatchEvent(new window.MouseEvent("mousemove", { clientX: 120, clientY: 90, bubbles: true }));
-  const layer = doc.getElementById(hooks.ids.CURSOR_LAYER_ID);
-  assert(layer, "cursor layer appears after mousemove while recording");
-  const dot = layer.children[1];
-  assert(dot.style.opacity === "1", "cursor follower becomes visible");
+  window.dispatchEvent(new window.MouseEvent("mousemove", { clientX: 200, clientY: 180, bubbles: true }));
+  assert(!doc.getElementById(hooks.ids.CURSOR_LAYER_ID), "mousemove never creates a cursor overlay (no always-visible follower)");
 
+  // A click still gets its transient, page-anchored ring.
   window.dispatchEvent(new window.MouseEvent("mousedown", { clientX: 120, clientY: 90, bubbles: true }));
-  assert(layer.querySelectorAll("div").length >= 3, "click ring spawned into the overlay layer");
+  const layer = doc.getElementById(hooks.ids.CURSOR_LAYER_ID);
+  assert(layer, "click ring layer appears on mousedown");
+  assert(hooks.clickRingCount() === 1, "exactly one click ring is alive after one click");
+  assert(layer.children.length === 1, "the overlay layer contains only the click ring (no follower dot/ring)");
 
   const recBefore = sent.filter((m) => m && m.type === "REC_EVENT").length;
   doc.getElementById("b").click();
   await new Promise((r) => setTimeout(r, 50));
   const recs = sent.filter((m) => m && m.type === "REC_EVENT");
   eq(recs.length, recBefore + 1, "recorded click still emits exactly one REC_EVENT");
-  assert(recs.length && recs[recs.length - 1].overlayActive === true, "REC_EVENT reports overlayActive so the SW skips the stale stamp");
+  assert(recs.length && recs[recs.length - 1].overlayActive === true, "REC_EVENT reports the live ring so the SW skips a double stamp");
+
+  // The SW commits the step and echoes the step count back: the oldest ring
+  // (whose screenshot was just taken) fades out instead of lingering.
+  contentListeners[0]({ type: "BTR_STEP_COUNT", count: 7 });
+  assert(layer.children[0] && layer.children[0].style.opacity === "0", "step commit retires the click ring it just captured");
 
   const bar = doc.getElementById(hooks.ids.TOOLBAR_ID);
+  eq(bar.querySelector("span:nth-of-type(2)").textContent, "7", "step count updates live from BTR_STEP_COUNT");
   const buttons = bar.querySelectorAll("button");
   buttons[1].click(); // Stop
   buttons[0].click(); // Pause toggle
@@ -1188,14 +1199,98 @@ section("v2.0.6 — live cursor overlay + in-page toolbar (content.js in jsdom)"
   assert(sent.some((m) => m && m.type === "TOOLBAR_TOGGLE_PAUSE"), "toolbar Pause asks the service worker to toggle pause");
   eq(sent.filter((m) => m && m.type === "REC_EVENT").length, recBefore + 1, "toolbar interactions are never recorded as steps");
 
-  contentListeners[0]({ type: "BTR_STEP_COUNT", count: 7 });
-  eq(bar.querySelector("span:nth-of-type(2)").textContent, "7", "step count updates live from BTR_STEP_COUNT");
-
   contentListeners[0]({ type: "ATTACH_RECORDER", recording: false, paused: false, excludedDomains: [], sensitivePatterns: [], showCursor: true, stepCount: 0 });
   assert(!doc.getElementById(hooks.ids.TOOLBAR_ID), "toolbar is removed on detach");
   assert(!doc.getElementById(hooks.ids.CURSOR_LAYER_ID), "cursor overlay is removed on detach");
 
   dom.window.close();
+}
+
+/* ------------------------------------------------------------------ */
+
+section("v2.0.7 — annotation geometry: hit-testing, handles, rotation, crop remap");
+
+{
+  const { syncGeom, annotationHit, handlesAt, rotateAround, cropRemap } =
+    await import("./annotation-geom.js");
+
+  // Rects keep x2/y2 in lockstep with w/h (the stale-x2 bug that broke
+  // selection after a resize).
+  const rect = syncGeom({ type: "rectangle", x: 10, y: 10, w: 50, h: 30 });
+  eq(rect.x2, 60, "syncGeom derives x2 for rect-like shapes");
+  eq(rect.y2, 40, "syncGeom derives y2 for rect-like shapes");
+  rect.w = 80;
+  syncGeom(rect);
+  eq(rect.x2, 90, "syncGeom repairs stale x2 after resize");
+
+  const arrow = syncGeom({ type: "arrow", x: 0, y: 0, x2: 30, y2: 40 });
+  eq(arrow.w, 30, "syncGeom derives the arrow bbox width from its endpoints");
+  eq(arrow.h, 40, "syncGeom derives the arrow bbox height from its endpoints");
+
+  // Hit-testing matches what the user sees, not a loose bounding box.
+  const anns = [
+    { type: "rectangle", x: 0, y: 0, w: 100, h: 100, id: "r1" },
+    { type: "text", x: 120, y: 10, fontSize: 18, text: "Hello world", id: "t1" },
+    { type: "marker", x: 220, y: 30, number: 1, id: "m1" },
+    { type: "arrow", x: 300, y: 0, x2: 300, y2: 200, id: "a1" }
+  ];
+  anns.forEach(syncGeom);
+  eq(annotationHit(anns, { x: 90, y: 90 }).id, "r1", "rect is hittable inside its box");
+  eq(annotationHit(anns, { x: 135, y: 18 }).id, "t1", "text is hittable across its measured box (was anchor-only)");
+  eq(annotationHit(anns, { x: 228, y: 24 }).id, "m1", "marker is hittable across its visible disc (was 8px core)");
+  eq(annotationHit(anns, { x: 312, y: 100 }), null, "points beside the arrow shaft miss");
+  eq(annotationHit(anns, { x: 306, y: 100 }).id, "a1", "arrow is hittable along its segment, not just its bbox");
+
+  // Handles: arrows expose head, tail and a rotate knob; text/markers stay
+  // move-only; rects keep the bottom-right resize handle.
+  const arr = { type: "arrow", x: 0, y: 0, x2: 100, y2: 0 };
+  eq(handlesAt(arr, { x: 100, y: 0 }), "head", "arrow head handle detected");
+  eq(handlesAt(arr, { x: 0, y: 0 }), "tail", "arrow tail handle detected");
+  const rot = handlesAt(arr, { x: 50, y: -26 });
+  eq(rot, "rotate", "arrow rotate handle detected above the midpoint");
+  eq(handlesAt({ type: "text", x: 0, y: 0, fontSize: 18, text: "hi" }, { x: 5, y: 5 }), null, "text has no resize/rotate handles");
+  eq(handlesAt({ type: "rectangle", x: 0, y: 0, w: 40, h: 40 }, { x: 40, y: 40 }), "se", "rect keeps its se resize handle");
+
+  // Rotation preserves the segment length and pivots around the midpoint.
+  const turned = rotateAround(50, 0, 0, 0, 100, 0, 0, Math.PI / 2);
+  eq(turned.x, 50, "rotated tail lands on the pivot axis (x)");
+  eq(turned.y, -50, "rotated tail lands on the pivot axis (y)");
+  eq(turned.x2, 50, "rotated head lands on the pivot axis (x)");
+  eq(turned.y2, 50, "rotated head lands on the pivot axis (y)");
+  const lenBefore = Math.hypot(100, 0);
+  const lenAfter = Math.hypot(turned.x2 - turned.x, turned.y2 - turned.y);
+  assert(Math.abs(lenBefore - lenAfter) < 1.5, "rotation preserves arrow length");
+
+  // Crop: coordinates remap by the crop offset, fully-outside annotations
+  // are dropped, intersecting ones survive.
+  const cropped = cropRemap([
+    { type: "rectangle", x: 60, y: 60, w: 30, h: 30, id: "in" },
+    { type: "marker", x: 45, y: 45, id: "kept-edge" },
+    { type: "rectangle", x: 500, y: 500, w: 30, h: 30, id: "out" }
+  ], 50, 50, 200, 150);
+  const inAnn = cropped.find((a) => a.id === "in");
+  assert(inAnn && inAnn.x === 10 && inAnn.y === 10, "annotations shift by the crop offset");
+  assert(!cropped.some((a) => a.id === "out"), "annotations fully outside the crop are removed");
+  assert(cropped.some((a) => a.id === "kept-edge"), "annotations intersecting the crop edge survive");
+}
+
+/* ------------------------------------------------------------------ */
+
+section("v2.0.7 — double-click reported by two DOM events commits one step");
+
+{
+  const { createRecorder } = await import("./recorder-core.js");
+  const rec = createRecorder();
+  rec.startRecording({ id: 1, windowId: 1 }, {});
+  const target = { selector: "#go", tag: "button", text: "Go" };
+  const first = rec.handleEvent({ event: "DOUBLE_CLICK", url: "https://example.com/x", target }, { tabId: 1 });
+  eq(first.action, "captured", "first DOUBLE_CLICK event is captured");
+  // background.js commits the raw event (which carries target), not the verdict.
+  const step = rec.commitStep({ event: "DOUBLE_CLICK", url: "https://example.com/x", target }, null);
+  eq(step.action, "added", "first double-click commits");
+  const second = rec.handleEvent({ event: "DOUBLE_CLICK", url: "https://example.com/x", target }, { tabId: 1 });
+  eq(second.action, "ignored", "the duplicate DOUBLE_CLICK (detail>=2 click + dblclick) is ignored");
+  eq(rec.uiState().session.stepCount, 1, "a double-click produces exactly one step");
 }
 
 /* ------------------------------------------------------------------ */

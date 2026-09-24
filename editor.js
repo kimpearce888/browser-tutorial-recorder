@@ -2,6 +2,9 @@ import { bgCall } from "./common-ui.js";
 import { makeId, formatDuration } from "./shared.js";
 import { exportTutorial, drawAnnotations } from "./exporter.js";
 import { getSettings, normalizeCombo, onSettingsChanged } from "./settings-store.js";
+import {
+  RECT_TYPES, syncGeom, annotationHit, handlesAt, rotateHandlePos, rotateAround, cropRemap
+} from "./annotation-geom.js";
 
 const els = {
   title: document.getElementById("tutorial-title"),
@@ -17,7 +20,10 @@ const els = {
   propUrl: document.getElementById("prop-url"),
   shotInfo: document.getElementById("shot-info"),
   swatches: document.getElementById("swatches"),
-  presets: document.getElementById("preset-chips")
+  presets: document.getElementById("preset-chips"),
+  cropBar: document.getElementById("crop-bar"),
+  cropApply: document.getElementById("btn-crop-apply"),
+  cropCancel: document.getElementById("btn-crop-cancel")
 };
 
 const COLORS = ["#ff5b45", "#1a73e8", "#1a7f4b", "#f9ab00", "#15161a"];
@@ -37,6 +43,7 @@ let dirty = false;
 let display = { image: null, scale: 1, imgScale: 1 };
 let drag = null;
 let cropMode = false;
+let crop = null;
 let clipboardAnnotation = null;
 let imgCache = { key: "", image: null };
 
@@ -137,17 +144,83 @@ async function renderCanvas() {
   ctx.drawImage(image, 0, 0, els.canvas.width, els.canvas.height);
   ctx.canvas.__btrImage = image;
   drawAnnotations(ctx, step.annotations, fit);
-  if (selectedAnnotationId) {
+  if (selectedAnnotationId && !cropMode) {
     const a = step.annotations.find((x) => x.id === selectedAnnotationId);
-    if (a) {
-      ctx.save();
-      ctx.strokeStyle = "#1a73e8";
-      ctx.setLineDash([5, 4]);
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(a.x * fit - 3, a.y * fit - 3, a.w * fit + 6, a.h * fit + 6);
-      ctx.restore();
+    if (a) drawSelectionUI(ctx, a, fit);
+  }
+  if (cropMode && crop) drawCropOverlay(ctx, fit);
+}
+
+function drawSelectionUI(ctx, a, fit) {
+  ctx.save();
+  ctx.strokeStyle = "#1a73e8";
+  ctx.setLineDash([5, 4]);
+  ctx.lineWidth = 1.5;
+  const x2 = a.x2 == null ? a.x : a.x2;
+  const y2 = a.y2 == null ? a.y : a.y2;
+  if (a.type === "arrow") {
+    ctx.strokeRect(Math.min(a.x, x2) * fit - 3, Math.min(a.y, y2) * fit - 3,
+      Math.abs(x2 - a.x) * fit + 6, Math.abs(y2 - a.y) * fit + 6);
+  } else if (a.type === "marker") {
+    ctx.beginPath();
+    ctx.arc(a.x * fit, a.y * fit, 16 * fit + 3, 0, Math.PI * 2);
+    ctx.stroke();
+  } else {
+    const dims = a.type === "text"
+      ? { w: a.w || 60, h: a.h || (a.fontSize || 18) * 1.4 }
+      : { w: a.w || 0, h: a.h || 0 };
+    ctx.strokeRect(a.x * fit - 3, a.y * fit - 3, dims.w * fit + 6, dims.h * fit + 6);
+  }
+  ctx.setLineDash([]);
+  if (tool === "select") {
+    if (a.type === "arrow") {
+      for (const [hx, hy] of [[a.x, a.y], [x2, y2]]) {
+        ctx.beginPath();
+        ctx.arc(hx * fit, hy * fit, 5, 0, Math.PI * 2);
+        ctx.fillStyle = "#ffffff";
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      const midX = ((a.x + x2) / 2) * fit, midY = ((a.y + y2) / 2) * fit;
+      const { hx, hy } = rotateHandlePos(a);
+      ctx.beginPath();
+      ctx.moveTo(midX, midY);
+      ctx.lineTo(hx * fit, hy * fit);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(hx * fit, hy * fit, 6, 0, Math.PI * 2);
+      ctx.fillStyle = "#1a73e8";
+      ctx.fill();
+    } else if (a.type !== "text" && a.type !== "marker") {
+      const cx = (a.x + (a.w || 0)) * fit, cy = (a.y + (a.h || 0)) * fit;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(cx - 5, cy - 5, 10, 10);
+      ctx.lineWidth = 2;
+      ctx.strokeRect(cx - 5, cy - 5, 10, 10);
     }
   }
+  ctx.restore();
+}
+
+function drawCropOverlay(ctx, fit) {
+  const x1 = Math.min(crop.x1, crop.x2) * fit;
+  const y1 = Math.min(crop.y1, crop.y2) * fit;
+  const w = Math.abs(crop.x2 - crop.x1) * fit;
+  const h = Math.abs(crop.y2 - crop.y1) * fit;
+  const W = ctx.canvas.width, H = ctx.canvas.height;
+  ctx.save();
+  ctx.fillStyle = "rgba(9,10,14,0.55)";
+  ctx.fillRect(0, 0, W, y1);
+  ctx.fillRect(0, y1 + h, W, Math.max(0, H - y1 - h));
+  ctx.fillRect(0, y1, x1, h);
+  ctx.fillRect(x1 + w, y1, Math.max(0, W - x1 - w), h);
+  ctx.setLineDash([6, 4]);
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x1, y1, w, h);
+  ctx.restore();
 }
 
 function canvasPoint(e) {
@@ -163,52 +236,50 @@ function canvasPoint(e) {
   };
 }
 
-function hitAnnotation(pt) {
-  const step = currentStep();
-  if (!step) return null;
-  for (let i = step.annotations.length - 1; i >= 0; i--) {
-    const a = step.annotations[i];
-    const x1 = Math.min(a.x, a.x2 || a.x), x2 = Math.max(a.x, a.x2 || a.x);
-    const y1 = Math.min(a.y, a.y2 || a.y), y2 = Math.max(a.y, a.y2 || a.y);
-    const tol = 8;
-    if (pt.x >= x1 - tol && pt.x <= x2 + tol && pt.y >= y1 - tol && pt.y <= y2 + tol) return a;
-  }
-  return null;
-}
-
-function resizeHandleAt(a, pt) {
-  if (!a || a.type === "text" || a.type === "marker") return null;
-  if (a.type === "arrow") {
-    const ex = a.x2 || a.x, ey = a.y2 || a.y;
-    return Math.abs(pt.x - ex) <= 10 && Math.abs(pt.y - ey) <= 10 ? "se" : null;
-  }
-  const cx = a.x + (a.w || 0), cy = a.y + (a.h || 0);
-  return Math.abs(pt.x - cx) <= 10 && Math.abs(pt.y - cy) <= 10 ? "se" : null;
-}
-
 els.canvas.addEventListener("pointerdown", (e) => {
   const step = currentStep();
   if (!step || !display.image) return;
   els.canvas.setPointerCapture(e.pointerId);
   const pt = canvasPoint(e);
 
-  if (tool === "select") {
-    const a = hitAnnotation(pt);
-    selectedAnnotationId = a ? a.id : null;
-    if (a) {
-      const handle = resizeHandleAt(a, pt);
-      if (handle) {
-        drag = { kind: "resize", ann: a, orig: { ...a } };
-      } else {
-        drag = { kind: "move", ann: a, startX: pt.x, startY: pt.y, orig: { ...a } };
-      }
-      snapshot();
-    }
+  if (cropMode) {
+    crop = { x1: pt.x, y1: pt.y, x2: pt.x, y2: pt.y };
+    drag = { kind: "crop", startX: pt.x, startY: pt.y };
     renderCanvas();
     return;
   }
-  if (cropMode) {
-    drag = { kind: "crop", startX: pt.x, startY: pt.y };
+
+  if (tool === "select") {
+    // Handles of the already-selected annotation win over a fresh hit test —
+    // they reach slightly outside the shape, and the head/tail/rotate knobs
+    // of an arrow overlap its own segment.
+    const sel = step.annotations.find((x) => x.id === selectedAnnotationId) || null;
+    const handle = sel ? handlesAt(sel, pt) : null;
+    if (sel && handle === "rotate") {
+      const x2 = sel.x2 == null ? sel.x : sel.x2;
+      const y2 = sel.y2 == null ? sel.y : sel.y2;
+      const cx = (sel.x + x2) / 2, cy = (sel.y + y2) / 2;
+      drag = {
+        kind: "rotate", ann: sel, orig: { ...sel }, cx, cy,
+        startAngle: Math.atan2(pt.y - cy, pt.x - cx)
+      };
+      snapshot();
+      renderCanvas();
+      return;
+    }
+    if (sel && handle) {
+      drag = { kind: "resize", handle, ann: sel, orig: { ...sel } };
+      snapshot();
+      renderCanvas();
+      return;
+    }
+    const a = annotationHit(step.annotations, pt);
+    selectedAnnotationId = a ? a.id : null;
+    if (a) {
+      drag = { kind: "move", ann: a, startX: pt.x, startY: pt.y, orig: { ...a } };
+      snapshot();
+    }
+    renderCanvas();
     return;
   }
 
@@ -236,7 +307,11 @@ els.canvas.addEventListener("pointerdown", (e) => {
     renderCanvas();
     return;
   }
-  drag = { kind: "draw", ann: base, step };
+  // startX/startY MUST be the pointerdown point: they anchor the shape. The
+  // old code left them undefined here, so the first move set w/h to 0 and
+  // the origin jumped to the first pointermove position — rectangles and
+  // arrows came out mangled whenever the pointer moved at all.
+  drag = { kind: "draw", ann: base, step, startX: pt.x, startY: pt.y };
   snapshot();
   step.annotations.push(base);
   selectedAnnotationId = base.id;
@@ -247,32 +322,60 @@ els.canvas.addEventListener("pointermove", (e) => {
   const pt = canvasPoint(e);
   if (drag.kind === "draw") {
     const a = drag.ann;
-    a.x2 = Math.round(pt.x); a.y2 = Math.round(pt.y);
-    a.x = Math.min(drag.startX ?? a.x, a.x2);
-    a.y = Math.min(drag.startY ?? a.y, a.y2);
-    a.w = Math.abs(a.x2 - (drag.startX ?? a.x2));
-    a.h = Math.abs(a.y2 - (drag.startY ?? a.y2));
-    if (drag.startX == null) { drag.startX = a.x2; drag.startY = a.y2; }
-    a.x = Math.min(drag.startX, a.x2); a.y = Math.min(drag.startY, a.y2);
-    a.w = Math.abs(a.x2 - drag.startX); a.h = Math.abs(a.y2 - drag.startY);
+    if (a.type === "arrow") {
+      // Arrows keep the tail pinned at the pointerdown point; the head
+      // follows the pointer. Forcing the tail to the bbox corner (old
+      // behavior) made arrows point the wrong way when drawn upward.
+      a.x2 = Math.round(pt.x);
+      a.y2 = Math.round(pt.y);
+    } else {
+      a.x = Math.round(Math.min(drag.startX, pt.x));
+      a.y = Math.round(Math.min(drag.startY, pt.y));
+      a.w = Math.round(Math.abs(pt.x - drag.startX));
+      a.h = Math.round(Math.abs(pt.y - drag.startY));
+    }
+    syncGeom(a);
   } else if (drag.kind === "move") {
     const a = drag.ann;
     const dx = Math.round(pt.x - drag.startX);
     const dy = Math.round(pt.y - drag.startY);
-    a.x = drag.orig.x + dx; a.y = drag.orig.y + dy;
-    if (a.type === "arrow") { a.x2 = drag.orig.x2 + dx; a.y2 = drag.orig.y2 + dy; }
+    a.x = drag.orig.x + dx;
+    a.y = drag.orig.y + dy;
+    if (drag.orig.x2 != null) {
+      a.x2 = drag.orig.x2 + dx;
+      a.y2 = drag.orig.y2 + dy;
+    }
+    syncGeom(a);
   } else if (drag.kind === "resize") {
     const a = drag.ann;
-    if (a.type === "arrow") {
-      a.x2 = Math.round(pt.x); a.y2 = Math.round(pt.y);
-    } else if (a.type !== "text" && a.type !== "marker") {
+    if (drag.handle === "head") {
+      a.x2 = Math.round(pt.x);
+      a.y2 = Math.round(pt.y);
+    } else if (drag.handle === "tail") {
+      a.x = Math.round(pt.x);
+      a.y = Math.round(pt.y);
+    } else if (RECT_TYPES.has(a.type)) {
       a.w = Math.max(3, Math.round(pt.x - a.x));
       a.h = Math.max(3, Math.round(pt.y - a.y));
     }
+    syncGeom(a);
+  } else if (drag.kind === "rotate") {
+    const a = drag.ann;
+    const pointerAngle = Math.atan2(pt.y - drag.cy, pt.x - drag.cx);
+    const next = rotateAround(
+      drag.cx, drag.cy,
+      drag.orig.x, drag.orig.y,
+      drag.orig.x2 == null ? drag.orig.x : drag.orig.x2,
+      drag.orig.y2 == null ? drag.orig.y : drag.orig.y2,
+      drag.startAngle, pointerAngle
+    );
+    a.x = next.x; a.y = next.y; a.x2 = next.x2; a.y2 = next.y2;
+    syncGeom(a);
   } else if (drag.kind === "crop") {
-    cropPreview(drag.startX, drag.startY, pt.x, pt.y);
+    crop.x2 = pt.x;
+    crop.y2 = pt.y;
   }
-  if (drag.kind !== "crop") renderCanvas();
+  renderCanvas();
 });
 
 els.canvas.addEventListener("pointerup", (e) => {
@@ -281,19 +384,25 @@ els.canvas.addEventListener("pointerup", (e) => {
   const pt = canvasPoint(e);
   if (kind === "draw") {
     const a = drag.ann;
-    if (a.type === "arrow") {
-      a.w = Math.abs(a.x2 - a.x); a.h = Math.abs(a.y2 - a.y);
-    }
-    if (a.w < 3 && a.h < 3 && a.type !== "arrow") {
+    const tiny = a.type === "arrow"
+      ? Math.hypot((a.x2 == null ? a.x : a.x2) - a.x, (a.y2 == null ? a.y : a.y2) - a.y) < 4
+      : (a.w < 3 && a.h < 3);
+    if (tiny) {
       const step = currentStep();
       step.annotations = step.annotations.filter((x) => x.id !== a.id);
+      if (selectedAnnotationId === a.id) selectedAnnotationId = null;
       undoStack.pop();
     }
     markDirty();
-  } else if (kind === "move") {
+  } else if (kind === "move" || kind === "resize" || kind === "rotate") {
     markDirty();
   } else if (kind === "crop") {
-    applyCrop(drag.startX, drag.startY, pt.x, pt.y);
+    crop.x2 = pt.x;
+    crop.y2 = pt.y;
+    // An accidental click without a real drag clears the marquee instead of
+    // committing a degenerate crop region.
+    if (Math.abs(crop.x2 - crop.x1) < 8 || Math.abs(crop.y2 - crop.y1) < 8) crop = null;
+    syncCropBar();
   }
   drag = null;
   renderCanvas();
@@ -302,9 +411,13 @@ els.canvas.addEventListener("pointerup", (e) => {
 function openTextInput(pt, ann) {
   const input = els.textInput;
   input.classList.remove("hidden");
-  const wrapRect = els.canvasWrap.getBoundingClientRect();
-  input.style.left = `${els.canvas.offsetLeft + pt.x * display.scale}px`;
-  input.style.top = `${els.canvas.offsetTop + pt.y * display.scale}px`;
+  // Map the canvas-bitmap point through the LIVE displayed size: display.scale
+  // predates any CSS shrinking of the canvas, so the input could drift away
+  // from the click point on narrow windows.
+  const rect = els.canvas.getBoundingClientRect();
+  const ratio = els.canvas.width > 0 ? rect.width / els.canvas.width : display.scale;
+  input.style.left = `${els.canvas.offsetLeft + pt.x * ratio}px`;
+  input.style.top = `${els.canvas.offsetTop + pt.y * ratio}px`;
   input.value = "";
   input.focus();
   const commit = () => {
@@ -331,20 +444,43 @@ function openTextInput(pt, ann) {
   input.addEventListener("blur", commit);
 }
 
-function cropPreview() { /* live preview not needed; crop applies on pointerup */ }
+// ----------------------------------------------------------------
+// Crop tool: a real one. Toggle with the Crop button, drag a marquee
+// (live preview with the outside dimmed), adjust by dragging again,
+// then Apply (button or Enter) or Cancel (button or Esc).
+// ----------------------------------------------------------------
+function syncCropBar() {
+  if (!els.cropBar) return;
+  els.cropBar.classList.toggle("hidden", !cropMode);
+  els.cropApply.disabled = !crop;
+}
 
-async function applyCrop(x1, y1, x2, y2) {
+function exitCropMode() {
   cropMode = false;
+  crop = null;
+  tool = "select";
   els.canvas.classList.remove("selecting");
+  document.querySelectorAll(".tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === "select"));
+  syncCropBar();
+}
+
+function cancelCrop() {
+  crop = null;
+  exitCropMode();
+  renderCanvas();
+}
+
+async function applyCrop() {
+  if (!cropMode || !crop) return;
   const step = currentStep();
-  if (!step || !display.image || !step.screenshot.width) return;
+  if (!step || !display.image || !step.screenshot.width) { cancelCrop(); return; }
   const imgScale = display.imgScale;
-  const nx1 = Math.max(0, Math.round(Math.min(x1, x2) * imgScale));
-  const ny1 = Math.max(0, Math.round(Math.min(y1, y2) * imgScale));
-  const nx2 = Math.min(display.image.naturalWidth, Math.round(Math.max(x1, x2) * imgScale));
-  const ny2 = Math.min(display.image.naturalHeight, Math.round(Math.max(y1, y2) * imgScale));
+  const nx1 = Math.max(0, Math.round(Math.min(crop.x1, crop.x2) * imgScale));
+  const ny1 = Math.max(0, Math.round(Math.min(crop.y1, crop.y2) * imgScale));
+  const nx2 = Math.min(display.image.naturalWidth, Math.round(Math.max(crop.x1, crop.x2) * imgScale));
+  const ny2 = Math.min(display.image.naturalHeight, Math.round(Math.max(crop.y1, crop.y2) * imgScale));
   const w = nx2 - nx1, h = ny2 - ny1;
-  if (w < 10 || h < 10) return;
+  if (w < 10 || h < 10) { cancelCrop(); return; }
   snapshot();
   const c = document.createElement("canvas");
   c.width = w; c.height = h;
@@ -353,10 +489,11 @@ async function applyCrop(x1, y1, x2, y2) {
   step.screenshot.image = c.toDataURL("image/png");
   step.screenshot.width = cssW;
   step.screenshot.height = cssH;
-  for (const a of step.annotations) {
-    a.x -= nx1 / imgScale; a.y -= ny1 / imgScale;
-    if (a.type === "arrow") { a.x2 -= nx1 / imgScale; a.y2 -= ny1 / imgScale; }
-  }
+  // Annotations move with the image; ones left fully outside the crop are
+  // dropped instead of lingering at negative coordinates.
+  step.annotations = cropRemap(step.annotations, Math.round(nx1 / imgScale), Math.round(ny1 / imgScale), cssW, cssH);
+  selectedAnnotationId = null;
+  exitCropMode();
   markDirty();
   renderAll();
 }
@@ -517,8 +654,11 @@ document.querySelectorAll(".tool").forEach((btn) => {
   btn.addEventListener("click", () => {
     tool = btn.dataset.tool;
     cropMode = false;
+    crop = null;
     document.querySelectorAll(".tool").forEach((b) => b.classList.toggle("active", b === btn));
     els.canvas.classList.toggle("selecting", tool !== "select");
+    syncCropBar();
+    renderCanvas();
   });
 });
 document.querySelector('.tool[data-tool="select"]').classList.add("active");
@@ -570,7 +710,7 @@ function pasteAnnotation() {
   const copy = JSON.parse(JSON.stringify(clipboardAnnotation));
   copy.id = makeId("ann");
   copy.x += 14; copy.y += 14;
-  if (copy.type === "arrow") { copy.x2 += 14; copy.y2 += 14; }
+  if (copy.x2 != null) { copy.x2 += 14; copy.y2 += 14; }
   if (copy.type === "marker") copy.number = step.annotations.filter((x) => x.type === "marker").length + 1;
   step.annotations.push(copy);
   selectedAnnotationId = copy.id;
@@ -666,12 +806,23 @@ document.getElementById("btn-split").addEventListener("click", () => {
   renderAll();
 });
 
-document.getElementById("btn-crop").addEventListener("click", () => {
+const cropBtn = document.getElementById("btn-crop");
+cropBtn.addEventListener("click", () => {
   cropMode = !cropMode;
-  tool = cropMode ? "crop" : "select";
-  els.canvas.classList.toggle("selecting", !cropMode);
-  alert(cropMode ? "Drag a rectangle on the screenshot to crop, then release." : "Crop cancelled.");
+  crop = null;
+  if (cropMode) {
+    tool = "crop";
+    els.canvas.classList.add("selecting");
+    document.querySelectorAll(".tool").forEach((b) => b.classList.remove("active"));
+    cropBtn.classList.add("active");
+  } else {
+    exitCropMode();
+  }
+  syncCropBar();
+  renderCanvas();
 });
+els.cropApply.addEventListener("click", applyCrop);
+els.cropCancel.addEventListener("click", cancelCrop);
 
 async function recapture(mode) {
   const step = currentStep();
@@ -757,6 +908,11 @@ window.addEventListener("keydown", (e) => {
     else if (action === "shortcuts") alert(shortcutsHelpText());
     return;
   }
+  if (!typing && cropMode) {
+    if (e.key === "Enter") { e.preventDefault(); applyCrop(); }
+    else if (e.key === "Escape") { e.preventDefault(); cancelCrop(); }
+    return;
+  }
   if (!typing && e.key === "Delete" && selectedAnnotationId) deleteSelectedAnnotation();
   if (!typing && (e.key === "v" || e.key === "V")) {
     const btn = document.querySelector('.tool[data-tool="select"]');
@@ -779,6 +935,9 @@ window.addEventListener("resize", () => renderCanvas().catch(() => {}));
     const res = await bgCall({ type: "GET_TUTORIAL", id: tutorialId });
     tutorial = res.tutorial;
     tutorial.steps = tutorial.steps || [];
+    // Repair legacy geometry (v2.0.6 saved rects with stale x2/y2 and arrows
+    // with missing w/h) so selection and handles work on old tutorials.
+    tutorial.steps.forEach((s) => (s.annotations || []).forEach(syncGeom));
     els.title.value = tutorial.title;
     syncStyleInputs();
     renderAll();

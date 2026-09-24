@@ -172,6 +172,12 @@ export function createRecorder(deps = {}) {
     }
 
     if (event === "DOUBLE_CLICK") {
+      // The content script reports a double-click twice (second click with
+      // detail>=2, then the dblclick event) — keep only the first one.
+      const prevDbl = lastStep();
+      if (prevDbl && prevDbl.action === "DOUBLE_CLICK" && sameTarget(prevDbl.target, evt.target) && now() - prevDbl.screenshot.timestamp < 1500) {
+        return { action: "ignored", reason: "dblclick-duplicate" };
+      }
       const prev = lastStep();
       if (prev && prev.action === "CLICK" && sameTarget(prev.target, evt.target) && now() - prev.screenshot.timestamp < 1500) {
         state.steps.pop();
