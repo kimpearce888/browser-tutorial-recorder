@@ -16,10 +16,154 @@
   let sensitivePatterns = [];
   let excludedDomains = [];
   let autoPauseIdleSec = 0;
+  let cursorEnabled = true;
 
   const masks = new Map();
   let maskScanTimer = null;
   let lastHeartbeat = 0;
+
+  // ----------------------------------------------------------------
+  // Live cursor overlay: drawn INTO the page so every screenshot
+  // contains the cursor at the exact live position (no post-capture
+  // stamping lag, correct placement even in iframes — each frame
+  // composites its own overlay).
+  // ----------------------------------------------------------------
+  const CURSOR_LAYER_ID = "__btr-cursor-layer";
+  const TOOLBAR_ID = "__btr-toolbar";
+  let cursorLayer = null;
+  let cursorDot = null;
+  let cursorRing = null;
+  const clickRings = new Set();
+  let toolbar = null;
+  let toolbarPauseBtn = null;
+  let toolbarCount = null;
+
+  function cursorOverlayOn() {
+    return attached && !paused && cursorEnabled;
+  }
+
+  function ensureCursorLayer() {
+    if (cursorLayer && cursorLayer.isConnected) return cursorLayer;
+    cursorLayer = document.createElement("div");
+    cursorLayer.id = CURSOR_LAYER_ID;
+    cursorLayer.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none;";
+    (document.body || document.documentElement).appendChild(cursorLayer);
+    cursorRing = document.createElement("div");
+    cursorRing.style.cssText = "position:fixed;left:0;top:0;width:36px;height:36px;margin:-18px 0 0 -18px;"
+      + "border-radius:50%;border:3px solid rgba(255,113,82,.92);background:rgba(255,113,82,.16);"
+      + "box-shadow:0 0 0 1px rgba(255,255,255,.55),inset 0 0 8px rgba(255,113,82,.3);opacity:0;will-change:transform;";
+    cursorDot = document.createElement("div");
+    cursorDot.style.cssText = "position:fixed;left:0;top:0;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;"
+      + "border-radius:50%;background:rgba(255,113,82,.98);box-shadow:0 0 0 2px rgba(255,255,255,.9);"
+      + "opacity:0;will-change:transform;";
+    cursorLayer.appendChild(cursorRing);
+    cursorLayer.appendChild(cursorDot);
+    return cursorLayer;
+  }
+
+  function hideCursorFollower() {
+    if (cursorDot) cursorDot.style.opacity = "0";
+    if (cursorRing) cursorRing.style.opacity = "0";
+  }
+
+  function moveCursorFollower(x, y) {
+    if (!cursorOverlayOn()) { hideCursorFollower(); return; }
+    ensureCursorLayer();
+    const t = `translate3d(${Math.round(x)}px,${Math.round(y)}px,0)`;
+    cursorDot.style.transform = t;
+    cursorRing.style.transform = t;
+    cursorDot.style.opacity = "1";
+    cursorRing.style.opacity = "1";
+  }
+
+  // Click rings are anchored to PAGE coordinates so they stay glued to the
+  // content they mark even when the page scrolls between the click and the
+  // (rate-limited) screenshot that follows it.
+  function positionClickRings() {
+    const sx = window.scrollX || 0, sy = window.scrollY || 0;
+    for (const ring of clickRings) {
+      ring.style.transform = `translate3d(${Math.round(ring.__btrX - sx)}px,${Math.round(ring.__btrY - sy)}px,0)`;
+    }
+  }
+
+  function spawnClickRing(clientX, clientY) {
+    if (!cursorOverlayOn()) return;
+    ensureCursorLayer();
+    const ring = document.createElement("div");
+    ring.__btrX = clientX + (window.scrollX || 0);
+    ring.__btrY = clientY + (window.scrollY || 0);
+    ring.style.cssText = "position:absolute;left:0;top:0;width:40px;height:40px;margin:-20px 0 0 -20px;"
+      + "border-radius:50%;border:4px solid rgba(255,113,82,.95);background:rgba(255,113,82,.2);"
+      + "box-shadow:0 0 0 1px rgba(255,255,255,.6);will-change:transform,opacity;transition:opacity .25s;";
+    cursorLayer.appendChild(ring);
+    clickRings.add(ring);
+    positionClickRings();
+    setTimeout(() => {
+      ring.style.opacity = "0";
+      setTimeout(() => { ring.remove(); clickRings.delete(ring); }, 280);
+    }, 1250);
+  }
+
+  function clearCursorOverlay() {
+    for (const ring of clickRings) ring.remove();
+    clickRings.clear();
+    if (cursorLayer) { cursorLayer.remove(); cursorLayer = null; cursorDot = null; cursorRing = null; }
+  }
+
+  // ----------------------------------------------------------------
+  // In-page recording toolbar (top frames only). Its own interactions
+  // are explicitly excluded from recording.
+  // ----------------------------------------------------------------
+  function inBtrUi(el) {
+    return Boolean(el && el.closest && el.closest(`#${TOOLBAR_ID}`));
+  }
+
+  function removeToolbar() {
+    if (toolbar) { toolbar.remove(); toolbar = null; toolbarPauseBtn = null; toolbarCount = null; }
+  }
+
+  function ensureToolbar() {
+    if (!IS_TOP || !attached) return;
+    if (toolbar && toolbar.isConnected) { syncToolbar(); return; }
+    toolbar = document.createElement("div");
+    toolbar.id = TOOLBAR_ID;
+    toolbar.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483647;display:flex;align-items:center;gap:10px;"
+      + "background:rgba(21,22,26,.92);border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:8px 14px;"
+      + "font:600 13px/1 system-ui,sans-serif;color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.35);user-select:none;";
+    const dot = document.createElement("span");
+    dot.style.cssText = "width:10px;height:10px;border-radius:50%;background:#d93025;box-shadow:0 0 6px #d93025;";
+    toolbarCount = document.createElement("span");
+    toolbarCount.style.cssText = "min-width:14px;text-align:center;font-variant-numeric:tabular-nums;";
+    toolbarCount.textContent = "0";
+    toolbarPauseBtn = document.createElement("button");
+    toolbarPauseBtn.type = "button";
+    toolbarPauseBtn.style.cssText = "border:0;background:rgba(255,255,255,.14);color:#fff;border-radius:999px;"
+      + "padding:6px 12px;font:inherit;cursor:pointer;";
+    toolbarPauseBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      safeSend({ type: "TOOLBAR_TOGGLE_PAUSE" });
+    });
+    const stopBtn = document.createElement("button");
+    stopBtn.type = "button";
+    stopBtn.textContent = "\u23F9 Stop";
+    stopBtn.style.cssText = "border:0;background:#d93025;color:#fff;border-radius:999px;"
+      + "padding:6px 12px;font:inherit;cursor:pointer;";
+    stopBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      safeSend({ type: "TOOLBAR_STOP" });
+    });
+    toolbar.appendChild(dot);
+    toolbar.appendChild(toolbarCount);
+    toolbar.appendChild(toolbarPauseBtn);
+    toolbar.appendChild(stopBtn);
+    (document.body || document.documentElement).appendChild(toolbar);
+    syncToolbar();
+  }
+
+  function syncToolbar() {
+    if (!toolbarPauseBtn) return;
+    toolbarPauseBtn.textContent = paused ? "\u25B6 Resume" : "\u23F8 Pause";
+  }
 
   function safeSend(message) {
     try {
@@ -317,6 +461,7 @@
 
   function sendEvent(event, el, domEvent, extra) {
     if (!attached || paused || internalPage() || domainExcluded()) return;
+    if (domEvent && inBtrUi(domEvent.target)) return;
     const rect = el ? el.getBoundingClientRect() : null;
     const point = domEvent && Number.isFinite(domEvent.clientX)
       ? { x: Math.round(domEvent.clientX), y: Math.round(domEvent.clientY) }
@@ -329,6 +474,7 @@
       frameUrl: location.href,
       isIframe: !IS_TOP,
       frameNonce: IS_TOP ? null : FRAME_NONCE,
+      overlayActive: cursorOverlayOn(),
       description: el ? describe(event, el, extra || {}) : (extra && extra.description) || "",
       viewport: viewport(),
       target: el ? {
@@ -368,6 +514,7 @@
   const ACTIONABLE = "a,button,input,select,textarea,label,summary,[role='button'],[role='link'],[role='option'],[role='tab'],[role='menuitem'],[onclick],[contenteditable]:not([contenteditable='false'])";
 
   document.addEventListener("click", (event) => {
+    if (inBtrUi(event.target)) return;
     const el = event.target instanceof Element ? event.target.closest(ACTIONABLE) : null;
     if (!el) return;
     const tag = el.tagName;
@@ -382,24 +529,26 @@
   }, true);
 
   document.addEventListener("dblclick", (event) => {
+    if (inBtrUi(event.target)) return;
     const el = event.target instanceof Element ? event.target.closest(ACTIONABLE) : null;
     if (el) sendEvent("DOUBLE_CLICK", el, event);
   }, true);
 
   document.addEventListener("contextmenu", (event) => {
+    if (inBtrUi(event.target)) return;
     const el = event.target instanceof Element ? event.target.closest(ACTIONABLE) : null;
     if (el) sendEvent("RIGHT_CLICK", el, event);
   }, true);
 
   document.addEventListener("auxclick", (event) => {
-    if (event.button !== 1) return;
+    if (event.button !== 1 || inBtrUi(event.target)) return;
     const el = event.target instanceof Element ? event.target.closest("a,[role='link']") : null;
     if (el) sendEvent("MIDDLE_CLICK", el, event);
   }, true);
 
   document.addEventListener("change", (event) => {
     const el = event.target;
-    if (!(el instanceof Element)) return;
+    if (!(el instanceof Element) || inBtrUi(el)) return;
     if (el.tagName === "SELECT") {
       const opt = el.selectedOptions && el.selectedOptions[0];
       sendEvent("SELECT", el, event, { option: opt ? (opt.textContent || "").trim().slice(0, 60) : null });
@@ -423,7 +572,7 @@
 
   document.addEventListener("submit", (event) => {
     const form = event.target;
-    if (!(form instanceof Element)) return;
+    if (!(form instanceof Element) || inBtrUi(form)) return;
     const submitter = event.submitter || form.querySelector("button[type='submit'], button, input[type='submit']");
     sendEvent("SUBMIT", submitter instanceof Element ? submitter : form, event);
     if (event.submitter) {
@@ -444,6 +593,7 @@
 
   let scrollTimer = null;
   function onScroll() {
+    positionClickRings();
     if (!attached || paused) return;
     clearTimeout(scrollTimer);
     scrollTimer = setTimeout(() => {
@@ -458,6 +608,7 @@
   document.addEventListener("scroll", onScroll, { passive: true, capture: true });
 
   document.addEventListener("drop", (event) => {
+    if (inBtrUi(event.target)) return;
     const el = event.target instanceof Element ? event.target.closest("[role='button'],a,button,input,textarea,[contenteditable]") || event.target : null;
     if (el instanceof Element) sendEvent("DROP", el, event);
   }, true);
@@ -490,6 +641,14 @@
   window.addEventListener("resize", scheduleMaskWork, { passive: true });
   new MutationObserver(scheduleMaskWork).observe(document.documentElement, { childList: true, subtree: true });
 
+  window.addEventListener("mousemove", (e) => moveCursorFollower(e.clientX, e.clientY), { passive: true, capture: true });
+  document.addEventListener("mouseleave", hideCursorFollower, true);
+  window.addEventListener("mousedown", (e) => {
+    if (inBtrUi(e.target)) return;
+    spawnClickRing(e.clientX, e.clientY);
+  }, { capture: true, passive: true });
+  window.addEventListener("scroll", positionClickRings, { passive: true, capture: true });
+
   window.addEventListener("message", (e) => {
     const data = e.data;
     if (data && (data.type === "BTR_OFFSET_REQ" || data.type === "BTR_OFFSET_RES")) {
@@ -505,11 +664,25 @@
       excludedDomains = Array.isArray(message.excludedDomains) ? message.excludedDomains : [];
       sensitivePatterns = Array.isArray(message.sensitivePatterns) ? message.sensitivePatterns : [];
       autoPauseIdleSec = Number(message.autoPauseIdleSec) || 0;
-      if (attached) startMaskLoop(); else clearMasks();
+      cursorEnabled = message.showCursor !== false;
+      if (attached) {
+        startMaskLoop();
+        ensureToolbar();
+        if (toolbarCount && typeof message.stepCount === "number") toolbarCount.textContent = String(message.stepCount);
+        if (paused) clearCursorOverlay();
+      } else {
+        clearMasks();
+        clearCursorOverlay();
+        removeToolbar();
+      }
     } else if (message.type === "DETACH_RECORDER") {
       attached = false;
       paused = false;
       clearMasks();
+      clearCursorOverlay();
+      removeToolbar();
+    } else if (message.type === "BTR_STEP_COUNT" && toolbarCount) {
+      toolbarCount.textContent = String(Number(message.count) || 0);
     }
     return undefined;
   });
@@ -528,6 +701,8 @@
   self.__btrTest = {
     buildSelector, fieldLabel, visibleText, describe, isSensitiveField,
     collectSensitiveFields, cumulativeOffset, viewport,
-    getState: () => ({ attached, paused, sensitivePatterns, excludedDomains })
+    getState: () => ({ attached, paused, sensitivePatterns, excludedDomains, cursorEnabled }),
+    cursorOverlayOn, spawnClickRing, ensureCursorLayer, ensureToolbar, inBtrUi,
+    ids: { CURSOR_LAYER_ID, TOOLBAR_ID }
   };
 })();

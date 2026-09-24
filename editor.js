@@ -37,6 +37,8 @@ let dirty = false;
 let display = { image: null, scale: 1, imgScale: 1 };
 let drag = null;
 let cropMode = false;
+let clipboardAnnotation = null;
+let imgCache = { key: "", image: null };
 
 const params = new URLSearchParams(location.search);
 const tutorialId = params.get("id");
@@ -102,17 +104,27 @@ async function renderCanvas() {
   if (!step || !step.screenshot || !step.screenshot.image) {
     els.canvas.width = 640; els.canvas.height = 200;
     ctx.clearRect(0, 0, els.canvas.width, els.canvas.height);
-    els.canvasEmpty.classList.toggle("hidden", Boolean(step));
+    els.canvasEmpty.textContent = step
+      ? "This step has no screenshot. Use Recapture in the right pane, or delete the step."
+      : "Select a step to edit it.";
+    els.canvasEmpty.classList.remove("hidden");
     display.image = null;
     return;
   }
   els.canvasEmpty.classList.add("hidden");
-  const image = new Image();
-  await new Promise((resolve, reject) => {
-    image.onload = resolve;
-    image.onerror = () => reject(new Error("Screenshot failed to load."));
-    image.src = step.screenshot.image;
-  });
+  // Cache the decoded bitmap: re-decoding a multi-MB data URL on every
+  // pointermove made dragging annotations feel broken (janky, laggy draws).
+  const key = `${step.id}|${step.screenshot.image.length}|${step.screenshot.image.slice(-40)}`;
+  let image = imgCache.key === key ? imgCache.image : null;
+  if (!image) {
+    image = new Image();
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = () => reject(new Error("Screenshot failed to load."));
+      image.src = step.screenshot.image;
+    });
+    imgCache = { key, image };
+  }
   const wrapW = els.canvasWrap.clientWidth - 32;
   const wrapH = els.canvasWrap.clientHeight - 32;
   const fit = Math.min(wrapW / image.naturalWidth, wrapH / image.naturalHeight, 1);
@@ -139,10 +151,15 @@ async function renderCanvas() {
 }
 
 function canvasPoint(e) {
+  // Use the live rect, not the nominal fit: CSS (max-width/max-height) can
+  // shrink the displayed canvas below its bitmap size, and every coordinate
+  // from drawing to hit-testing must map through that exact ratio.
   const rect = els.canvas.getBoundingClientRect();
+  const sx = rect.width > 0 ? els.canvas.width / rect.width : 1;
+  const sy = rect.height > 0 ? els.canvas.height / rect.height : 1;
   return {
-    x: (e.clientX - rect.left) / display.scale,
-    y: (e.clientY - rect.top) / display.scale
+    x: (e.clientX - rect.left) / sx,
+    y: (e.clientY - rect.top) / sy
   };
 }
 
@@ -159,6 +176,16 @@ function hitAnnotation(pt) {
   return null;
 }
 
+function resizeHandleAt(a, pt) {
+  if (!a || a.type === "text" || a.type === "marker") return null;
+  if (a.type === "arrow") {
+    const ex = a.x2 || a.x, ey = a.y2 || a.y;
+    return Math.abs(pt.x - ex) <= 10 && Math.abs(pt.y - ey) <= 10 ? "se" : null;
+  }
+  const cx = a.x + (a.w || 0), cy = a.y + (a.h || 0);
+  return Math.abs(pt.x - cx) <= 10 && Math.abs(pt.y - cy) <= 10 ? "se" : null;
+}
+
 els.canvas.addEventListener("pointerdown", (e) => {
   const step = currentStep();
   if (!step || !display.image) return;
@@ -169,7 +196,12 @@ els.canvas.addEventListener("pointerdown", (e) => {
     const a = hitAnnotation(pt);
     selectedAnnotationId = a ? a.id : null;
     if (a) {
-      drag = { kind: "move", ann: a, startX: pt.x, startY: pt.y, orig: { ...a } };
+      const handle = resizeHandleAt(a, pt);
+      if (handle) {
+        drag = { kind: "resize", ann: a, orig: { ...a } };
+      } else {
+        drag = { kind: "move", ann: a, startX: pt.x, startY: pt.y, orig: { ...a } };
+      }
       snapshot();
     }
     renderCanvas();
@@ -229,6 +261,14 @@ els.canvas.addEventListener("pointermove", (e) => {
     const dy = Math.round(pt.y - drag.startY);
     a.x = drag.orig.x + dx; a.y = drag.orig.y + dy;
     if (a.type === "arrow") { a.x2 = drag.orig.x2 + dx; a.y2 = drag.orig.y2 + dy; }
+  } else if (drag.kind === "resize") {
+    const a = drag.ann;
+    if (a.type === "arrow") {
+      a.x2 = Math.round(pt.x); a.y2 = Math.round(pt.y);
+    } else if (a.type !== "text" && a.type !== "marker") {
+      a.w = Math.max(3, Math.round(pt.x - a.x));
+      a.h = Math.max(3, Math.round(pt.y - a.y));
+    }
   } else if (drag.kind === "crop") {
     cropPreview(drag.startX, drag.startY, pt.x, pt.y);
   }
@@ -513,6 +553,41 @@ function deleteSelectedAnnotation() {
   renderCanvas();
 }
 
+function copySelectedAnnotation() {
+  const step = currentStep();
+  if (!step || !selectedAnnotationId) return;
+  const a = step.annotations.find((x) => x.id === selectedAnnotationId);
+  if (!a) return;
+  clipboardAnnotation = JSON.parse(JSON.stringify(a));
+  els.saveState.textContent = "Copied ✓";
+  setTimeout(() => { if (!dirty && els.saveState.textContent === "Copied ✓") els.saveState.textContent = ""; }, 1400);
+}
+
+function pasteAnnotation() {
+  const step = currentStep();
+  if (!step || !clipboardAnnotation) return;
+  snapshot();
+  const copy = JSON.parse(JSON.stringify(clipboardAnnotation));
+  copy.id = makeId("ann");
+  copy.x += 14; copy.y += 14;
+  if (copy.type === "arrow") { copy.x2 += 14; copy.y2 += 14; }
+  if (copy.type === "marker") copy.number = step.annotations.filter((x) => x.type === "marker").length + 1;
+  step.annotations.push(copy);
+  selectedAnnotationId = copy.id;
+  markDirty();
+  renderCanvas();
+}
+
+function shortcutsHelpText() {
+  const map = settings.editorShortcuts || {};
+  return "Editor shortcuts\n" + Object.entries(map)
+    .map(([action, combo]) => `${combo || "—"} — ${action}`)
+    .join("\n");
+}
+
+document.getElementById("btn-copy-annotation").addEventListener("click", copySelectedAnnotation);
+document.getElementById("btn-paste-annotation").addEventListener("click", pasteAnnotation);
+
 document.getElementById("btn-add-step").addEventListener("click", () => {
   snapshot();
   const step = currentStep();
@@ -676,9 +751,17 @@ window.addEventListener("keydown", (e) => {
     else if (action === "deselect") { selectedAnnotationId = null; renderCanvas(); }
     else if (action === "export") exportMenu.classList.toggle("hidden");
     else if (action === "dashboard") location.href = "dashboard.html";
+    else if (action === "copyAnnotation") copySelectedAnnotation();
+    else if (action === "pasteAnnotation") pasteAnnotation();
+    else if (action === "preview") document.getElementById("btn-preview").click();
+    else if (action === "shortcuts") alert(shortcutsHelpText());
     return;
   }
   if (!typing && e.key === "Delete" && selectedAnnotationId) deleteSelectedAnnotation();
+  if (!typing && (e.key === "v" || e.key === "V")) {
+    const btn = document.querySelector('.tool[data-tool="select"]');
+    if (btn) btn.click();
+  }
   if (!typing && /^([1-9])$/.test(e.key)) {
     const tools = ["highlight", "rectangle", "circle", "arrow", "text", "blur", "redaction", "spotlight", "marker"];
     const t = tools[Number(e.key) - 1];

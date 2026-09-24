@@ -19,6 +19,7 @@ let flushTimer = null;
 let attachedTabIds = new Set();
 let keepAliveTimer = null;
 let captureBlocked = false;
+let lastCaptureAt = 0;
 
 function armKeepAlive() {
   if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
@@ -116,6 +117,31 @@ async function sendToTab(tabId, message, options) {
   catch { return false; }
 }
 
+// chrome.tabs.captureVisibleTab is hard-limited by Chrome to ~2 calls per
+// second (MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND). Every capture in the
+// extension MUST go through this gate: it enforces a global minimum gap
+// between calls and retries once on a genuine quota error instead of
+// failing the whole step / full-page stitch.
+async function captureVisible(windowId, options) {
+  for (let attempt = 0; ; attempt++) {
+    const waitMs = lastCaptureAt + MIN_CAPTURE_GAP_MS - Date.now();
+    if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+    try {
+      const dataUrl = await chrome.tabs.captureVisibleTab(windowId, options);
+      lastCaptureAt = Date.now();
+      return dataUrl;
+    } catch (e) {
+      lastCaptureAt = Date.now();
+      const msg = String((e && e.message) || e);
+      if (attempt < 4 && /MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND|quota/i.test(msg)) {
+        await new Promise((r) => setTimeout(r, 700 + attempt * 350));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
 async function attachToTab(tabId, frameId = null) {
   const settings = await getSettings();
   const ui = recorder.uiState();
@@ -127,7 +153,9 @@ async function attachToTab(tabId, frameId = null) {
     paused: session ? session.status === "paused" : false,
     excludedDomains: session ? session.excludedDomains || [] : [],
     sensitivePatterns: settings.sensitivePatterns,
-    autoPauseIdleSec: settings.autoPauseIdleSec
+    autoPauseIdleSec: settings.autoPauseIdleSec,
+    showCursor: settings.showCursor !== false,
+    stepCount: session ? session.stepCount : 0
   }, options);
   attachedTabIds.add(tabId);
 }
@@ -290,7 +318,7 @@ async function processEvent(evt, senderInfo) {
   try {
     const tab = await chrome.tabs.get(verdict.tabId).catch(() => null);
     if (tab) {
-      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+      const dataUrl = await captureVisible(tab.windowId, {
         format: settings.screenshotFormat === "jpeg" ? "jpeg" : "png",
         quality: settings.screenshotQuality
       });
@@ -309,7 +337,13 @@ async function processEvent(evt, senderInfo) {
     await broadcastUi();
   }
 
-  if (screenshot && verdict.needsCursor && settings.showCursor !== false) {
+  // The live in-page cursor overlay (content.js) draws the click ring and
+  // cursor follower directly into the rendered page, so the screenshot
+  // already contains the cursor at the exact live position — stamping again
+  // would double-draw it and, on pages that scrolled after the click, put
+  // the stamp in a stale spot. Only stamp for events reported WITHOUT an
+  // active overlay (e.g. a click that raced the attach).
+  if (screenshot && verdict.needsCursor && settings.showCursor !== false && evt.overlayActive !== true) {
     const point = evt.target && evt.target.point;
     if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
       try {
@@ -322,7 +356,13 @@ async function processEvent(evt, senderInfo) {
 
   const committed = recorder.commitStep(evt, screenshot);
   await broadcastUi();
-  if (committed.action === "added") scheduleDraftFlush();
+  if (committed.action === "added") {
+    scheduleDraftFlush();
+    if (typeof verdict.tabId === "number") {
+      const ui = recorder.uiState();
+      await sendToTab(verdict.tabId, { type: "BTR_STEP_COUNT", count: ui.session ? ui.session.stepCount : 0 });
+    }
+  }
 }
 
 async function handleContentMessage(message, sender) {
@@ -349,6 +389,23 @@ async function handleContentMessage(message, sender) {
       enqueueEvent(message.event ? message : null, senderInfo);
       break;
     }
+    case "TOOLBAR_TOGGLE_PAUSE": {
+      if (!recorder.isActive()) break;
+      if (recorder.isRecording()) recorder.setPaused(true, "manual");
+      else recorder.setPaused(false);
+      armIdleTimer();
+      await broadcastUi();
+      await notifyAttached();
+      break;
+    }
+    case "TOOLBAR_STOP": {
+      const res = await stopRecording({ endedAt: Date.now() });
+      if (res && res.ok && res.tutorialId) {
+        const editorUrl = chrome.runtime.getURL(`editor.html?id=${encodeURIComponent(res.tutorialId)}`);
+        await chrome.tabs.create({ url: editorUrl }).catch(() => {});
+      }
+      break;
+    }
     default:
       break;
   }
@@ -359,6 +416,8 @@ async function captureFullPage(tabId) {
   fullPageInProgress = true;
   const captures = [];
   let cssWidth = 0, cssHeight = 0, dpr = 1;
+  let restoreY = 0;
+  let scrolled = false;
   try {
     const [{ result: vp }] = await chrome.scripting.executeScript({
       target: { tabId },
@@ -370,7 +429,9 @@ async function captureFullPage(tabId) {
         dpr: window.devicePixelRatio || 1
       })
     });
+    if (!vp || !(vp.h > 0)) throw new Error("Could not read the page size for a full-page capture.");
     cssWidth = vp.w; cssHeight = Math.max(1, vp.h); dpr = vp.dpr || 1;
+    restoreY = vp.y || 0;
     const MAX_CANVAS_HEIGHT = 12000;
     const MAX_CANVAS_WIDTH = 3840;
     const maxShots = Math.max(1, Math.min(40, Math.floor(MAX_CANVAS_HEIGHT / cssHeight)));
@@ -383,38 +444,43 @@ async function captureFullPage(tabId) {
         document.documentElement.appendChild(style);
       }
     });
+    scrolled = true;
     let requested = 0;
     let lastActualY = -1;
     let pageTotal = vp.total || 0;
     for (let shot = 0; shot < maxShots; shot++) {
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        func: (scrollTo) => window.scrollTo(0, scrollTo),
-        args: [requested]
-      });
-      await new Promise((r) => setTimeout(r, 260));
+      // Scroll and WAIT for the viewport to actually land on the requested
+      // offset (smooth-scroll pages, lazy layout shifts) before capturing,
+      // then give the compositor a beat to paint. Each captureVisible call
+      // below is rate-limited by the global capture gate.
       const [{ result: pos }] = await chrome.scripting.executeScript({
         target: { tabId },
-        func: () => ({ y: window.scrollY, total: document.documentElement.scrollHeight, h: document.documentElement.clientHeight })
+        func: async (scrollToY) => {
+          window.scrollTo(0, scrollToY);
+          const deadline = performance.now() + 900;
+          await new Promise((r) => setTimeout(r, 140));
+          while (performance.now() < deadline && Math.abs(window.scrollY - scrollToY) > 2) {
+            await new Promise((r) => setTimeout(r, 90));
+          }
+          await new Promise((r) => setTimeout(r, 150));
+          return {
+            y: window.scrollY,
+            total: document.documentElement.scrollHeight,
+            h: document.documentElement.clientHeight
+          };
+        },
+        args: [requested]
       });
+      if (!pos) break;
       if (shot > 0 && pos.y <= lastActualY) break;
       lastActualY = pos.y;
       pageTotal = Math.max(pageTotal, pos.total);
-      const dataUrl = await chrome.tabs.captureVisibleTab(undefined, { format: "png" });
+      const dataUrl = await captureVisible(undefined, { format: "png" });
       captures.push({ dataUrl, y: pos.y });
       const next = nextScrollY(pos, requested);
       if (next == null) break;
       requested = next;
     }
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      func: (restoreY) => {
-        window.scrollTo(0, restoreY);
-        const style = document.getElementById("__btr_fullpage_hide");
-        if (style) style.remove();
-      },
-      args: [vp.y || 0]
-    });
 
     if (!captures.length) throw new Error("Could not capture the page for a full-page screenshot.");
     const images = await Promise.all(captures.map((c) => createImageBitmapFromUrl(c.dataUrl)));
@@ -437,6 +503,19 @@ async function captureFullPage(tabId) {
     };
   } finally {
     fullPageInProgress = false;
+    // ALWAYS restore the page, even when the stitch threw mid-loop — the old
+    // code left pages scrolled to the bottom with their scrollbars hidden.
+    if (scrolled) {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (y) => {
+          window.scrollTo(0, y);
+          const style = document.getElementById("__btr_fullpage_hide");
+          if (style) style.remove();
+        },
+        args: [restoreY]
+      }).catch(() => {});
+    }
   }
 }
 
@@ -543,7 +622,7 @@ async function handlePageMessage(message) {
           if (message.mode === "full") {
             shot = await captureFullPage(tab.id);
           } else {
-            const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+            const dataUrl = await captureVisible(tab.windowId, {
               format: settings.screenshotFormat === "jpeg" ? "jpeg" : "png",
               quality: settings.screenshotQuality
             });

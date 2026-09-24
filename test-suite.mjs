@@ -839,6 +839,367 @@ section("full-page scroll planning + cursor stamp decisions (v2.0.5 regressions)
 
 /* ------------------------------------------------------------------ */
 
+section("v2.0.6 — captureVisibleTab quota gate (MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND)");
+
+{
+  const TAB1 = { id: 1, windowId: 1, url: "https://example.com/app", title: "Example App", active: true };
+  const tabsMap = new Map([[1, TAB1]]);
+  const store = { local: new Map(), session: new Map() };
+  const mkStorage = (m) => ({
+    get: async (keys) => {
+      const out = {};
+      for (const k of (Array.isArray(keys) ? keys : [keys])) if (m.has(k)) out[k] = m.get(k);
+      return out;
+    },
+    set: async (obj) => { for (const [k, v] of Object.entries(obj)) m.set(k, v); },
+    remove: async (keys) => { for (const k of (Array.isArray(keys) ? keys : [keys])) m.delete(k); }
+  });
+  const bgMessageHandlers = [];
+  const captureTimes = [];
+  // Chrome really throws this when the extension exceeds ~2 captures/sec —
+  // exactly what the old un-gated full-page stitcher did on its 3rd shot.
+  const captureMock = async () => {
+    const now = Date.now();
+    if (captureTimes.length && now - captureTimes[captureTimes.length - 1] < 540) {
+      throw new Error("This request exceeds the MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND quota.");
+    }
+    captureTimes.push(now);
+    return "data:image/png;base64,MOCKSHOT";
+  };
+
+  globalThis.chrome = {
+    runtime: {
+      id: "btr-test-ext",
+      getURL: (p) => `chrome-extension://btr-test-ext/${p || ""}`,
+      onMessage: { addListener: (fn) => bgMessageHandlers.push(fn) }
+    },
+    storage: {
+      local: mkStorage(store.local),
+      session: mkStorage(store.session),
+      onChanged: { addListener: () => {} }
+    },
+    action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
+    scripting: { executeScript: async () => [{ result: null }] },
+    commands: { onCommand: { addListener: () => {} } },
+    tabs: {
+      query: async (q) => (q && q.active ? [TAB1] : [...tabsMap.values()]),
+      get: async (id) => tabsMap.get(id) || null,
+      create: async (o) => ({ id: 99, ...o }),
+      update: async () => ({}),
+      remove: async () => {},
+      sendMessage: async () => {},
+      captureVisibleTab: captureMock,
+      onUpdated: { addListener: () => {} },
+      onActivated: { addListener: () => {} },
+      onCreated: { addListener: () => {} },
+      onRemoved: { addListener: () => {} }
+    }
+  };
+
+  await import("./background.js?capture-gate");
+
+  const callBg = (message, sender) => Promise.race([
+    new Promise((resolve) => { bgMessageHandlers[0](message, sender, resolve); }),
+    new Promise((r) => setTimeout(() => r(undefined), 500))
+  ]);
+  const contentSender = { id: "btr-test-ext", tab: { id: 1, windowId: 1 }, frameId: 0, url: "https://example.com/app" };
+  const pageSender = { id: "btr-test-ext", tab: { id: 42, windowId: 3 }, frameId: 0, url: "chrome-extension://btr-test-ext/popup.html" };
+
+  await callBg({ type: "SAVE_SETTINGS", patch: { captureDelayMs: 0 } }, pageSender);
+  const startRes = await callBg({ type: "START_RECORDING" }, pageSender);
+  assert(startRes && startRes.ok === true, "recording starts for the quota-gate test");
+
+  // Three clicks in rapid succession — the old code rate-crashed here.
+  for (let i = 0; i < 3; i++) {
+    bgMessageHandlers[0](
+      { type: "REC_EVENT", event: "CLICK", url: "https://example.com/app", frameUrl: "https://example.com/app", isIframe: false, frameNonce: null, overlayActive: true, description: `Click button ${i}`, target: { selector: `#b${i}`, tag: "button", text: `B${i}`, point: { x: 10 + i, y: 10 } }, viewport: { width: 1280, height: 720, devicePixelRatio: 1 } },
+      contentSender,
+      () => {}
+    );
+  }
+  await new Promise((r) => setTimeout(r, 3200));
+
+  const uiRes = await callBg({ type: "GET_UI_STATE" }, pageSender);
+  assert(uiRes && uiRes.ok === true && uiRes.uiState.session, "ui state readable after burst");
+  eq(uiRes.uiState.session.stepCount, 3, "all 3 rapid clicks committed steps");
+  eq(captureTimes.length, 3, "captureVisibleTab called exactly once per step");
+  assert(uiRes.uiState.captureBlocked === false, "no capture failure surfaced (gate prevented the quota throw)");
+  let minGap = Infinity;
+  for (let i = 1; i < captureTimes.length; i++) minGap = Math.min(minGap, captureTimes[i] - captureTimes[i - 1]);
+  assert(minGap >= 540, `captures are rate-limited to <= 2/sec (min gap ${minGap}ms)`);
+
+  delete globalThis.chrome;
+}
+
+/* ------------------------------------------------------------------ */
+
+section("v2.0.6 — capture gate retries a genuine quota error");
+
+{
+  const TAB1 = { id: 1, windowId: 1, url: "https://example.com/app", title: "Example App", active: true };
+  const tabsMap = new Map([[1, TAB1]]);
+  const store = { local: new Map(), session: new Map() };
+  const mkStorage = (m) => ({
+    get: async (keys) => {
+      const out = {};
+      for (const k of (Array.isArray(keys) ? keys : [keys])) if (m.has(k)) out[k] = m.get(k);
+      return out;
+    },
+    set: async (obj) => { for (const [k, v] of Object.entries(obj)) m.set(k, v); },
+    remove: async (keys) => { for (const k of (Array.isArray(keys) ? keys : [keys])) m.delete(k); }
+  });
+  const bgMessageHandlers = [];
+  let attempts = 0;
+
+  globalThis.chrome = {
+    runtime: {
+      id: "btr-test-ext",
+      getURL: (p) => `chrome-extension://btr-test-ext/${p || ""}`,
+      onMessage: { addListener: (fn) => bgMessageHandlers.push(fn) }
+    },
+    storage: {
+      local: mkStorage(store.local),
+      session: mkStorage(store.session),
+      onChanged: { addListener: () => {} }
+    },
+    action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
+    scripting: { executeScript: async () => [{ result: null }] },
+    commands: { onCommand: { addListener: () => {} } },
+    tabs: {
+      query: async (q) => (q && q.active ? [TAB1] : [...tabsMap.values()]),
+      get: async (id) => tabsMap.get(id) || null,
+      create: async (o) => ({ id: 99, ...o }),
+      update: async () => ({}),
+      remove: async () => {},
+      sendMessage: async () => {},
+      captureVisibleTab: async () => {
+        attempts++;
+        if (attempts === 1) throw new Error("This request exceeds the MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND quota.");
+        return "data:image/png;base64,MOCKSHOT";
+      },
+      onUpdated: { addListener: () => {} },
+      onActivated: { addListener: () => {} },
+      onCreated: { addListener: () => {} },
+      onRemoved: { addListener: () => {} }
+    }
+  };
+
+  await import("./background.js?capture-retry");
+
+  const callBg = (message, sender) => Promise.race([
+    new Promise((resolve) => { bgMessageHandlers[0](message, sender, resolve); }),
+    new Promise((r) => setTimeout(() => r(undefined), 500))
+  ]);
+  const contentSender = { id: "btr-test-ext", tab: { id: 1, windowId: 1 }, frameId: 0, url: "https://example.com/app" };
+  const pageSender = { id: "btr-test-ext", tab: { id: 42, windowId: 3 }, frameId: 0, url: "chrome-extension://btr-test-ext/popup.html" };
+
+  await callBg({ type: "SAVE_SETTINGS", patch: { captureDelayMs: 0 } }, pageSender);
+  await callBg({ type: "START_RECORDING" }, pageSender);
+  bgMessageHandlers[0](
+    { type: "REC_EVENT", event: "CLICK", url: "https://example.com/app", frameUrl: "https://example.com/app", isIframe: false, frameNonce: null, overlayActive: true, description: "Click the Go button", target: { selector: "#b", tag: "button", text: "Go", point: { x: 10, y: 10 } }, viewport: { width: 1280, height: 720, devicePixelRatio: 1 } },
+    contentSender,
+    () => {}
+  );
+  await new Promise((r) => setTimeout(r, 2600));
+
+  const uiRes = await callBg({ type: "GET_UI_STATE" }, pageSender);
+  assert(uiRes && uiRes.uiState.session && uiRes.uiState.session.stepCount === 1, "step commits even when the first capture hits the quota");
+  eq(attempts, 2, "quota error was retried once and then succeeded");
+  assert(uiRes.uiState.captureBlocked === false, "retried capture clears captureBlocked");
+
+  delete globalThis.chrome;
+}
+
+/* ------------------------------------------------------------------ */
+
+section("v2.0.6 — full-page stitcher survives the capture quota and always restores the page");
+
+{
+  const TAB1 = { id: 1, windowId: 1, url: "https://example.com/app", title: "Example App", active: true };
+  const tabsMap = new Map([[1, TAB1]]);
+  const store = { local: new Map(), session: new Map() };
+  const mkStorage = (m) => ({
+    get: async (keys) => {
+      const out = {};
+      for (const k of (Array.isArray(keys) ? keys : [keys])) if (m.has(k)) out[k] = m.get(k);
+      return out;
+    },
+    set: async (obj) => { for (const [k, v] of Object.entries(obj)) m.set(k, v); },
+    remove: async (keys) => { for (const k of (Array.isArray(keys) ? keys : [keys])) m.delete(k); }
+  });
+  const bgMessageHandlers = [];
+  const captureTimes = [];
+  const scriptKinds = [];
+  const PAGE = { w: 1280, h: 800, total: 2400 };
+  const captureMock = async () => {
+    const now = Date.now();
+    if (captureTimes.length && now - captureTimes[captureTimes.length - 1] < 540) {
+      throw new Error("This request exceeds the MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND quota.");
+    }
+    captureTimes.push(now);
+    return "data:image/png;base64,MOCKSHOT";
+  };
+  const executeScriptMock = async (opts) => {
+    const src = String(opts.func);
+    if (src.includes("scrollToY")) {
+      const requested = Array.isArray(opts.args) ? opts.args[0] : 0;
+      return [{ result: { y: Math.min(requested, PAGE.total - PAGE.h), total: PAGE.total, h: PAGE.h } }];
+    }
+    if (src.includes("createElement")) { scriptKinds.push("style"); return [{ result: null }]; }
+    if (src.includes("getElementById")) { scriptKinds.push("restore"); return [{ result: null }]; }
+    scriptKinds.push("probe");
+    return [{ result: { w: PAGE.w, h: PAGE.h, total: PAGE.total, y: 0, dpr: 1 } }];
+  };
+
+  // Minimal canvas stack so the stitch (OffscreenCanvas + createImageBitmap +
+  // FileReader + data: fetch) can run under Node.
+  globalThis.OffscreenCanvas = class {
+    constructor(w, h) { this.width = w; this.height = h; }
+    getContext() { return { drawImage() {} }; }
+    async convertToBlob() { return new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], { type: "image/png" }); }
+  };
+  globalThis.createImageBitmap = async () => ({ width: PAGE.w, height: PAGE.h, close() {} });
+  if (typeof globalThis.FileReader === "undefined") {
+    globalThis.FileReader = class {
+      readAsDataURL(blob) {
+        blob.arrayBuffer().then((buf) => {
+          this.result = `data:image/png;base64,${Buffer.from(buf).toString("base64")}`;
+          if (this.onload) this.onload();
+        });
+      }
+    };
+  }
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).startsWith("data:")) {
+      const b64 = String(url).split(",")[1] || "";
+      return { blob: async () => new Blob([Buffer.from(b64, "base64")], { type: "image/png" }) };
+    }
+    return realFetch(url);
+  };
+
+  globalThis.chrome = {
+    runtime: {
+      id: "btr-test-ext",
+      getURL: (p) => `chrome-extension://btr-test-ext/${p || ""}`,
+      onMessage: { addListener: (fn) => bgMessageHandlers.push(fn) }
+    },
+    storage: {
+      local: mkStorage(store.local),
+      session: mkStorage(store.session),
+      onChanged: { addListener: () => {} }
+    },
+    action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
+    scripting: { executeScript: executeScriptMock },
+    commands: { onCommand: { addListener: () => {} } },
+    tabs: {
+      query: async (q) => (q && q.active ? [TAB1] : [...tabsMap.values()]),
+      get: async (id) => tabsMap.get(id) || null,
+      create: async (o) => ({ id: 99, ...o }),
+      update: async () => ({}),
+      remove: async () => {},
+      sendMessage: async () => {},
+      captureVisibleTab: captureMock,
+      onUpdated: { addListener: () => {} },
+      onActivated: { addListener: () => {} },
+      onCreated: { addListener: () => {} },
+      onRemoved: { addListener: () => {} }
+    }
+  };
+
+  await import("./background.js?full-page");
+
+  const editorSender = { id: "btr-test-ext", tab: { id: 42, windowId: 3 }, frameId: 0, url: "chrome-extension://btr-test-ext/editor.html?id=tut-1" };
+  const res = await Promise.race([
+    new Promise((resolve) => { bgMessageHandlers[0]({ type: "CAPTURE_FULL_PAGE", tabId: 1 }, editorSender, resolve); }),
+    new Promise((r) => setTimeout(() => r(undefined), 12000))
+  ]);
+
+  assert(res && res.ok === true, `full-page capture succeeds under the quota gate (${res && res.ok === false ? res.error : ""})`);
+  assert(res && res.screenshot && res.screenshot.width === 1280, "stitched canvas keeps the CSS width");
+  assert(res && res.screenshot && res.screenshot.height === 2400, "stitched canvas spans the full 2400px page (not 2 viewports)");
+  eq(captureTimes.length, 3, "2400px page needs exactly 3 viewport shots");
+  eq(scriptKinds.filter((k) => k === "restore").length, 1, "page scroll + scrollbar style are restored exactly once");
+
+  delete globalThis.fetch;
+  delete globalThis.OffscreenCanvas;
+  delete globalThis.createImageBitmap;
+  delete globalThis.FileReader;
+  delete globalThis.chrome;
+}
+
+/* ------------------------------------------------------------------ */
+
+section("v2.0.6 — live cursor overlay + in-page toolbar (content.js in jsdom)");
+
+{
+  const dom = new JSDOM(`<!DOCTYPE html><html><body>
+    <button id="b">Go</button>
+  </body></html>`, { url: "https://example.com/app", runScripts: "dangerously", pretendToBeVisual: true });
+  const { window } = dom;
+  const sent = [];
+  const contentListeners = [];
+  window.chrome = {
+    runtime: {
+      sendMessage: (msg) => { sent.push(msg); return Promise.resolve({ ok: true }); },
+      onMessage: { addListener: (fn) => contentListeners.push(fn) }
+    }
+  };
+  if (!window.CSS) window.CSS = {};
+  if (!window.CSS.escape) {
+    window.CSS.escape = (s) => String(s).replace(/[^a-zA-Z0-9_\-\u0080-\uffff]/g, (c) => "\\" + c);
+  }
+  const src = readFileSync(new URL("./content.js", import.meta.url), "utf8");
+  const scriptEl = window.document.createElement("script");
+  scriptEl.textContent = src;
+  window.document.body.appendChild(scriptEl);
+  const doc = window.document;
+  const hooks = window.__btrTest;
+
+  assert(!doc.getElementById(hooks.ids.CURSOR_LAYER_ID), "no cursor layer before attach");
+  assert(!doc.getElementById(hooks.ids.TOOLBAR_ID), "no toolbar before attach");
+
+  contentListeners[0]({ type: "ATTACH_RECORDER", recording: true, paused: false, excludedDomains: [], sensitivePatterns: [], showCursor: true, stepCount: 4 });
+  assert(doc.getElementById(hooks.ids.TOOLBAR_ID), "toolbar appears while recording");
+  assert(doc.getElementById(hooks.ids.TOOLBAR_ID).textContent.includes("4"), "toolbar shows the initial step count");
+
+  window.dispatchEvent(new window.MouseEvent("mousemove", { clientX: 120, clientY: 90, bubbles: true }));
+  const layer = doc.getElementById(hooks.ids.CURSOR_LAYER_ID);
+  assert(layer, "cursor layer appears after mousemove while recording");
+  const dot = layer.children[1];
+  assert(dot.style.opacity === "1", "cursor follower becomes visible");
+
+  window.dispatchEvent(new window.MouseEvent("mousedown", { clientX: 120, clientY: 90, bubbles: true }));
+  assert(layer.querySelectorAll("div").length >= 3, "click ring spawned into the overlay layer");
+
+  const recBefore = sent.filter((m) => m && m.type === "REC_EVENT").length;
+  doc.getElementById("b").click();
+  await new Promise((r) => setTimeout(r, 50));
+  const recs = sent.filter((m) => m && m.type === "REC_EVENT");
+  eq(recs.length, recBefore + 1, "recorded click still emits exactly one REC_EVENT");
+  assert(recs.length && recs[recs.length - 1].overlayActive === true, "REC_EVENT reports overlayActive so the SW skips the stale stamp");
+
+  const bar = doc.getElementById(hooks.ids.TOOLBAR_ID);
+  const buttons = bar.querySelectorAll("button");
+  buttons[1].click(); // Stop
+  buttons[0].click(); // Pause toggle
+  await new Promise((r) => setTimeout(r, 20));
+  assert(sent.some((m) => m && m.type === "TOOLBAR_STOP"), "toolbar Stop asks the service worker to stop");
+  assert(sent.some((m) => m && m.type === "TOOLBAR_TOGGLE_PAUSE"), "toolbar Pause asks the service worker to toggle pause");
+  eq(sent.filter((m) => m && m.type === "REC_EVENT").length, recBefore + 1, "toolbar interactions are never recorded as steps");
+
+  contentListeners[0]({ type: "BTR_STEP_COUNT", count: 7 });
+  eq(bar.querySelector("span:nth-of-type(2)").textContent, "7", "step count updates live from BTR_STEP_COUNT");
+
+  contentListeners[0]({ type: "ATTACH_RECORDER", recording: false, paused: false, excludedDomains: [], sensitivePatterns: [], showCursor: true, stepCount: 0 });
+  assert(!doc.getElementById(hooks.ids.TOOLBAR_ID), "toolbar is removed on detach");
+  assert(!doc.getElementById(hooks.ids.CURSOR_LAYER_ID), "cursor overlay is removed on detach");
+
+  dom.window.close();
+}
+
+/* ------------------------------------------------------------------ */
+
 console.log("  → " + passed + " passed\n");
 console.log("═══════════════════════════════════════");
 console.log(`  TOTAL: ${passed} passed, ${failed} failed`);
