@@ -686,6 +686,84 @@ section("integration — extension pages hosted in tabs reach page handlers");
 }
 
 /* ------------------------------------------------------------------ */
+section("integration — blocked screenshot capture is surfaced and steps still commit");
+
+{
+  const TAB1 = { id: 1, windowId: 1, url: "https://example.com/app", title: "Example App", active: true };
+  const tabsMap = new Map([[1, TAB1]]);
+  const store = { local: new Map(), session: new Map() };
+  const mkStorage = (m) => ({
+    get: async (keys) => {
+      const out = {};
+      for (const k of (Array.isArray(keys) ? keys : [keys])) if (m.has(k)) out[k] = m.get(k);
+      return out;
+    },
+    set: async (obj) => { for (const [k, v] of Object.entries(obj)) m.set(k, v); },
+    remove: async (keys) => { for (const k of (Array.isArray(keys) ? keys : [keys])) m.delete(k); }
+  });
+  const bgMessageHandlers = [];
+  let captureAttempts = 0;
+
+  globalThis.chrome = {
+    runtime: {
+      id: "btr-test-ext",
+      getURL: (p) => `chrome-extension://btr-test-ext/${p || ""}`,
+      onMessage: { addListener: (fn) => bgMessageHandlers.push(fn) }
+    },
+    storage: {
+      local: mkStorage(store.local),
+      session: mkStorage(store.session),
+      onChanged: { addListener: () => {} }
+    },
+    action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
+    scripting: { executeScript: async () => [{ result: null }] },
+    commands: { onCommand: { addListener: () => {} } },
+    tabs: {
+      query: async (q) => (q && q.active ? [TAB1] : [...tabsMap.values()]),
+      get: async (id) => tabsMap.get(id) || null,
+      create: async (o) => ({ id: 99, ...o }),
+      update: async () => ({}),
+      remove: async () => {},
+      sendMessage: async () => {},
+      captureVisibleTab: async () => { captureAttempts++; throw new Error("Missing permission for captureVisibleTab"); },
+      onUpdated: { addListener: () => {} },
+      onActivated: { addListener: () => {} },
+      onCreated: { addListener: () => {} },
+      onRemoved: { addListener: () => {} }
+    }
+  };
+
+  // Fresh background copy against a captureVisibleTab that always throws —
+  // exactly what users hit when host permissions do not satisfy the
+  // captureVisibleTab requirement (regressed in v2.0.0: http/https patterns
+  // instead of <all_urls>).
+  await import("./background.js?capture-fail");
+
+  const startRes = await new Promise((resolve) => {
+    bgMessageHandlers[0]({ type: "START_RECORDING" }, { id: "btr-test-ext", url: "chrome-extension://btr-test-ext/popup.html" }, resolve);
+  });
+  assert(startRes && startRes.ok === true, "recording starts even with a throwing captureVisibleTab");
+
+  bgMessageHandlers[0](
+    { type: "REC_EVENT", event: "CLICK", url: "https://example.com/app", frameUrl: "https://example.com/app", isIframe: false, frameNonce: null, description: "Click the Go button", target: { selector: "#b", tag: "button", text: "Go", point: { x: 10, y: 10 } }, viewport: { width: 1280, height: 720, devicePixelRatio: 1 } },
+    { id: "btr-test-ext", tab: { id: 1, windowId: 1 }, frameId: 0, url: "https://example.com/app" },
+    () => {}
+  );
+
+  await new Promise((r) => setTimeout(r, 1300));
+
+  eq(captureAttempts, 1, "captureVisibleTab attempted once per committed event");
+  const uiRes = await new Promise((resolve) => {
+    bgMessageHandlers[0]({ type: "GET_UI_STATE" }, { id: "btr-test-ext", tab: { id: 42, windowId: 3 }, frameId: 0, url: "chrome-extension://btr-test-ext/popup.html" }, resolve);
+  });
+  assert(uiRes && uiRes.ok === true && uiRes.uiState, "GET_UI_STATE responds after failed capture");
+  assert(uiRes.uiState.captureBlocked === true, "captureBlocked surfaces in uiState when screenshots fail");
+  assert(uiRes.uiState.session && uiRes.uiState.session.stepCount === 1, "the step still commits without an image when capture fails");
+
+  delete globalThis.chrome;
+}
+
+/* ------------------------------------------------------------------ */
 section("common-ui.js — bgCall retries transient no-response");
 
 {

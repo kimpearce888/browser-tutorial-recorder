@@ -13,6 +13,7 @@ main { padding: 0 12px; }
 
 .status-card { border-left: 4px solid var(--accent); }
 .muted-card { color: var(--muted); font-size: 13px; }
+.note.warn { color: #d93025; font-weight: 500; }
 
 .status-row { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }

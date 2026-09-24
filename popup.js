@@ -10,6 +10,7 @@ const els = {
   stepCount: document.getElementById("step-count"),
   tabCount: document.getElementById("tab-count"),
   pausedNote: document.getElementById("paused-note"),
+  captureWarn: document.getElementById("capture-warn"),
   btnStart: document.getElementById("btn-start"),
   btnPause: document.getElementById("btn-pause"),
   btnResume: document.getElementById("btn-resume"),
@@ -44,6 +45,7 @@ function render(ui) {
   els.statusDot.className = `dot ${isRec ? "rec" : "paused"}`;
   els.statusText.textContent = isRec ? "Recording" : "Paused";
   els.pausedNote.classList.toggle("hidden", isRec);
+  els.captureWarn.classList.toggle("hidden", !ui || !ui.captureBlocked);
   els.stepCount.textContent = `${session.stepCount} step${session.stepCount === 1 ? "" : "s"}`;
   els.tabCount.textContent = session.tabCount > 1 ? `${session.tabCount} tabs` : "";
   startedAt = session.startedAt;

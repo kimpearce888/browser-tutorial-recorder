@@ -1,5 +1,18 @@
 # Changelog
 
+## v2.0.4 — 2026-09-24
+
+### Fixed — tutorials recorded with no screenshots at all
+
+Live-reported: the editor now loads (v2.0.3 routing fix confirmed working), but **every step was missing its screenshot**.
+
+- **Root cause: `captureVisibleTab` permission regression from the v2.0.0 rewrite.** Chrome requires the **`<all_urls>`** permission (or `activeTab`) for `chrome.tabs.captureVisibleTab` — scheme-scoped match patterns like `http://*/*` + `https://*/*` do not satisfy it. v1.x shipped `<all_urls>`; the v2.0.0 manifest switched to scheme patterns, so **every single capture threw** and every step was silently saved with `status: "FAILED"` and an empty image. The failure was invisible until now because the editor could not load before v2.0.3.
+- **`host_permissions` restored to `["<all_urls>"]`** — screenshots capture again on every http/https page, matching the v1.x behavior.
+- **Blocked capture is now visible, not silent** — the background tracks a `captureBlocked` flag (set when a capture throws, cleared on the next successful capture and on new recordings), exposes it in the UI state, and the popup shows a red warning: "Screenshots are being blocked. Remove the extension in chrome://extensions and load it again…". A permission problem can no longer hide behind an empty tutorial.
+- **Regression test added** — a fresh background instance with a permanently throwing `captureVisibleTab`: recording starts, the click still commits a step (no fake image data), and `captureBlocked: true` surfaces in the UI state. 5 new assertions.
+
+**Tests: 162/162 pass.**
+
 ## v2.0.3 — 2026-09-24
 
 ### Fixed — editor/dashboard/settings pages could never load: "No response from the recorder service."

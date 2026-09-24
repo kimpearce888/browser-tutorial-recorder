@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Browser Tutorial Recorder",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Record browser actions and turn them into polished, privacy-safe step-by-step tutorials.",
   "minimum_chrome_version": "110",
   "action": {
@@ -25,8 +25,7 @@
     "tabs"
   ],
   "host_permissions": [
-    "http://*/*",
-    "https://*/*"
+    "<all_urls>"
   ],
   "commands": {
     "start-recording": {

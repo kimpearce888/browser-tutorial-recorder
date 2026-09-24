@@ -18,6 +18,7 @@ let idleTimer = null;
 let flushTimer = null;
 let attachedTabIds = new Set();
 let keepAliveTimer = null;
+let captureBlocked = false;
 
 function armKeepAlive() {
   if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
@@ -33,8 +34,8 @@ function respondErr(error) { return { ok: false, error: String((error && error.m
 
 async function broadcastUi() {
   armKeepAlive();
-  try { await chrome.storage.session.set({ [UI_KEY]: recorder.uiState() }); } catch { /* session store unavailable */ }
-  const ui = recorder.uiState();
+  const ui = { ...recorder.uiState(), captureBlocked };
+  try { await chrome.storage.session.set({ [UI_KEY]: ui }); } catch { /* session store unavailable */ }
   if (!ui.session) {
     await chrome.action.setBadgeText({ text: "" }).catch(() => {});
     return;
@@ -148,6 +149,7 @@ async function startRecording() {
     excludedDomains: settings.excludedDomains,
     title: tab && tab.title ? `Tutorial — ${tab.title}`.slice(0, 120) : "Untitled browser tutorial"
   });
+  captureBlocked = false;
   attachedTabIds = new Set();
   if (validForRecording(tab)) {
     await injectContentScript(tab.id);
@@ -250,10 +252,13 @@ async function processEvent(evt, senderInfo) {
         height: (evt.viewport && evt.viewport.height) || 0,
         dpr: (evt.viewport && evt.viewport.devicePixelRatio) || 1
       };
+      captureBlocked = false;
     }
   } catch (e) {
     console.warn("[BTR] capture failed:", String(e && e.message || e));
     screenshot = null;
+    captureBlocked = true;
+    await broadcastUi();
   }
 
   const committed = recorder.commitStep(evt, screenshot);
